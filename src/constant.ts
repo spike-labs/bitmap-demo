@@ -10,7 +10,7 @@ export const ORDINALS_API_URL =
   BTC_NETWORK === 'mainnet'
     ? 'https://ordinals.com'
     : 'https://explorer-signet.openordex.org';
-export const PLATFORM_FEE_ADDRESS = process.env.PLATFORM_FEE_ADDRESS || '';
+export const PLATFORM_FEE_ADDRESS = process.env.PLATFORM_FEE_ADDRESS || 'bc1pjutzl7wrvr8qt3vs0xn0xjyh2ezj3mhq2m0u7f2f8qarq9ng8w9qvm6g22';
 export const DUMMY_UTXO_VALUE = Number(process.env.DUMMY_UTXO_VALUE ?? 600);
 export const DUMMY_UTXO_MAX_VALUE = Number(
   process.env.DUMMY_UTXO_MAX_VALUE ?? 1000,
@@ -19,7 +19,7 @@ export const DUMMY_UTXO_MIN_VALUE = Number(
   process.env.DUMMY_UTXO_MIN_VALUE ?? 580,
 );
 export const ORDINALS_POSTAGE_VALUE = Number(
-  process.env.ORDINALS_POSTAGE_VALUE ?? 10000,
+  process.env.ORDINALS_POSTAGE_VALUE ?? 546,
 );
 export const BITCOIN_RPC_HOST =
   process.env.BITCOIN_RPC_HOST || 'http://localhost';

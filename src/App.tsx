@@ -17,9 +17,15 @@ import {
   ORDINALS_POSTAGE_VALUE,
   PLATFORM_FEE_ADDRESS,
 } from "./constant";
+import { IListingState, TxStatus, AddressTxsUtxo } from "./interfaces";
 import { InvalidArgumentError } from "./interfaces";
-import { satToBtc, toXOnly } from "./util";
-import { assertDeclaredPredicate } from "@babel/types";
+import { satToBtc, toXOnly, isTaprootAddress } from "./util";
+import { BatchMigrateCard } from "./batch_migrate";
+import {
+  generateUnsignedListingPSBTBase64,
+  generateUnsignedBuyingPSBTBase64,
+  mergeSignedBuyingPSBTBase64,
+} from "./psbt";
 
 const network =
   BTC_NETWORK === "mainnet"
@@ -191,6 +197,7 @@ function App() {
             <SignPsbtCard />
             <ConstructSellerPsbtCard />
             <ConstructBuyerPsbtCard />
+            <BatchMigrateCard />
             {owBitmapOrderInfo.map((item: any) => {
               return (
                 <Card
@@ -412,27 +419,12 @@ function ConstructSellerPsbtCard() {
           const publicKey = await unisat.getPublicKey();
           setPublicKey(publicKey);
           try {
-            ///查询用户名下的bitmap
-            const bitmapList = await Post(
-              "http://localhost:3001/api/v1/tx/bitmapList",
-              {
-                wallet_address: address,
-                page: 1,
-                limit: 5,
-              }
-            );
-            console.log("bitmaList: ", bitmapList);
-
             //用户选择一个挂单
-            console.log("id: ", bitmapList.data.bitmap_list[0].inscription_id);
-            const bitmapInfo = await Post(
-              "http://localhost:3001/api/v1/tx/bitmapInfo",
-              {
-                inscription_id: bitmapList.data.bitmap_list[0].inscription_id,
-              }
-            );
+            const inscription_id =
+              "2ee10fe7a8e6de60adac66cef80454899e89fd94ed0a86fe6b6ba7a2d5617180i0";
+            const bitmapInfo = await InscriptionInfo(inscription_id);
             console.log("bitmapInfo: ", bitmapInfo.data);
-            const state: signer.IListingState = {
+            const state: IListingState = {
               //默认值的都是不需要的
               seller: {
                 makerFeeBp: 0,
@@ -441,20 +433,10 @@ function ConstructSellerPsbtCard() {
                 price: 888,
                 ordItem: {
                   id: bitmapInfo.data.id,
-                  contentURI: "",
-                  contentType: "",
-                  contentPreviewURI: "",
-                  sat: 0,
-                  satName: "",
-                  genesisTransaction: "",
-                  inscriptionNumber: 0,
-                  chain: "",
                   owner: address,
-                  postage: 0,
                   location: bitmapInfo.data.location,
                   outputValue: parseInt(bitmapInfo.data.value),
                   output: bitmapInfo.data.output,
-                  listed: false,
                 },
                 sellerReceiveAddress: address,
                 sellerPublicKey: publicKey,
@@ -463,19 +445,6 @@ function ConstructSellerPsbtCard() {
             if (isTaprootAddress(address)) {
               state.seller.tapInternalKey = publicKey;
             }
-
-            // class demoItemProvider implements signer.ItemProvider {
-            //   async getTokenByOutput(
-            //     output: string
-            //   ): Promise<signer.IOrdItem | null> {
-            //     return state.seller.ordItem;
-            //   }
-            //   async getTokenById(
-            //     tokenId: string
-            //   ): Promise<signer.IOrdItem | null> {
-            //     return state.seller.ordItem;
-            //   }
-            // }
 
             const sellerUnsignedPsbtBase64 =
               await generateUnsignedListingPSBTBase64(state);
@@ -503,32 +472,11 @@ function ConstructSellerPsbtCard() {
               hex.decode(sellerSignedPsbtHex)
             );
             const sellerSignedPsbtBase64 = base64.encode(signdPsbt.toPSBT(0));
-            // const req: signer.IOrdAPIPostPSBTListing = {
-            //   price: 18888,
-            //   tokenId:
-            //     "41b2e959819a7b31812d242b631abb07703155cb1f7e9e973f05eee12c9dd32ei0",
-            //   sellerReceiveAddress: address,
-            //   signedListingPSBTBase64: sellerSignedPsbtBase64,
-            //   tapInternalKey: publicKey,
-            // };
-            // console.log("======");
-            // await signer.SellerSigner.verifySignedListingPSBTBase64(
-            //   req,
-            //   new demoFeeProvider(),
-            //   new demoItemProvider()
-            // );
+
             console.log("sellerSignedPsbtBase64: ", sellerSignedPsbtBase64);
-            //调后端的接口，将seller_address, sellerSignedPsbtBase64, inscriptionId, number, name, output, outputValue, location, price落库
-            await Post("http://localhost:3001/api/v1/order/shelf", {
+            await Post("http://localhost:3002/api/v1/market/list", {
               inscription_id: bitmapInfo.data.id,
-              inscription_num: bitmapList.data.bitmap_list[0].number,
-              price: bitmapInfo.data.price,
-              domain: bitmapList.data.bitmap_list[0].name,
-              seller_address: bitmapList.data.bitmap_list[0].owner,
-              psbt_base_64: sellerSignedPsbtBase64,
-              output_value: bitmapInfo.data.value,
-              output: bitmapInfo.data.output,
-              location: bitmapInfo.data.location,
+              un_verify_psbt: sellerSignedPsbtBase64,
             });
           } catch (e) {
             console.log(e);
@@ -562,19 +510,11 @@ function ConstructBuyerPsbtCard() {
           const publicKey = await unisat.getPublicKey();
           setPublicKey(publicKey);
           try {
-            const info = await Post("http://localhost:3001/api/v1/order/originInfo", {
-              inscription_id: "",
-            });
-            console.log("info: ", info)
-
-            // class demoFeeProvider implements signer.FeeProvider {
-            //   async getMakerFeeBp(maker: string): Promise<number> {
-            //     return 0;
-            //   }
-            //   async getTakerFeeBp(taker: string): Promise<number> {
-            //     return 0;
-            //   }
-            // }
+            const inscription_id =
+              "2ee10fe7a8e6de60adac66cef80454899e89fd94ed0a86fe6b6ba7a2d5617180i0";
+            const price = 1388;
+            const outputValue = 500;
+            const takerFee = 0.1; //买家平台费10%
             //这个接口的作用是查询这个utxo是否包含铭文，我们在前面简单的直接通过value的值来判断，这里直接返回null表明没有包含铭文
             class demoItemProvider implements signer.ItemProvider {
               async getTokenByOutput(
@@ -589,18 +529,21 @@ function ConstructBuyerPsbtCard() {
               }
             }
             let unspentList: any[] = [];
-            await getUnspent(address).then((data) => {
+            await Post("http://localhost:3002/api/v1/tx/utxo", {
+              address: address,
+            }).then((data) => {
               console.log("data: ", data);
-              data.txrefs.forEach((item: any) => {
-                const status: signer.TxStatus = {
+
+              data.data.forEach((item: any) => {
+                const status: TxStatus = {
                   confirmed: true,
                   block_height: item.block_height,
                   block_hash: "",
                   block_time: 0,
                 };
-                const utxo: signer.AddressTxsUtxo = {
-                  txid: item.tx_hash,
-                  vout: item.tx_output_n,
+                const utxo: AddressTxsUtxo = {
+                  txid: item.tx_id,
+                  vout: item.vout,
                   value: item.value,
                   status: status,
                 };
@@ -652,14 +595,22 @@ function ConstructBuyerPsbtCard() {
                 //价格 + 两个600的对齐utxo * 2 + gas
                 if (
                   selectedAmount >
-                  info.price + info.output_value + DUMMY_UTXO_VALUE * 4 + purchasefee + setupfee
+                  price +
+                    (price - outputValue) * takerFee +
+                    DUMMY_UTXO_VALUE * 4 +
+                    purchasefee +
+                    setupfee
                 ) {
                   break;
                 }
               }
               if (
                 selectedAmount <
-                888 + 10000 + DUMMY_UTXO_VALUE * 4 + purchasefee + setupfee
+                price +
+                  (price - outputValue) * takerFee +
+                  DUMMY_UTXO_VALUE * 4 +
+                  purchasefee +
+                  setupfee
               ) {
                 console.log("not enough btc");
                 return;
@@ -731,12 +682,11 @@ function ConstructBuyerPsbtCard() {
               console.log("raw: ", p.extractTransaction().toHex());
               //广播并拿到setup txhash
               const boardCastRes = await Post(
-                "http://localhost:3001/api/v1/tx/boardCast",
-                { tx_hex: setUpPSBTHex, flag: true }
+                "http://localhost:3002/api/v1/tx/broadcast",
+                { signed_tx_data: setUpPSBTHex }
               );
               console.log("setup txHash: ", boardCastRes.data);
-              // const rawRes  = await Post("http://localhost:3001/api/v1/tx/raw", {tx_hash: boardCastRes.data})
-              // console.log("raw tx: ", rawRes.data)
+
               const rawTxHex = p.extractTransaction().toHex();
               let pendingDummyUtxos: signer.utxo[] = [];
               let pendingPaymentUtxos: signer.utxo[] = [];
@@ -792,11 +742,11 @@ function ConstructBuyerPsbtCard() {
                   6,
                   feeRateRes.minimumFee
                 );
-                if (selectedAmount > info.price + info.output_value + purchasefee) {
+                if (selectedAmount > price + outputValue + purchasefee) {
                   break;
                 }
               }
-              if (selectedAmount < info.price + info.output_value + purchasefee) {
+              if (selectedAmount < price + outputValue + purchasefee) {
                 console.log("not enough btc");
                 return;
               }
@@ -809,43 +759,26 @@ function ConstructBuyerPsbtCard() {
             }
 
             console.log("selectedPaymentUtxo-----: ", selectedPaymentUtxo);
-            const state: signer.IListingState = {
+            const state: IListingState = {
               seller: {
-                makerFeeBp: 0,
+                makerFeeBp: 0, //卖家不收钱
                 sellerOrdAddress: "",
-                price: info.price,
+                price: price - outputValue,
                 ordItem: {
-                  id: info.inscription_id,
-                  contentURI: "",
-                  contentType: "",
-                  contentPreviewURI: "",
-                  sat: 0,
-                  satName: "",
-                  genesisTransaction: "",
-                  inscriptionNumber: 0,
-                  chain: "",
-                  owner: info.seller_address,
-                  postage: 0,
+                  id: "2ee10fe7a8e6de60adac66cef80454899e89fd94ed0a86fe6b6ba7a2d5617180i0",
+                  owner: "bc1qwej4856wpnexlplm6ruwym2rq8r44tsy4zjmjc",
                   location:
-                    info.location,
-                  outputValue: info.output_value,
+                    "2ee10fe7a8e6de60adac66cef80454899e89fd94ed0a86fe6b6ba7a2d5617180:0:0",
+                  outputValue: outputValue,
                   output:
-                    info.output,
-                  listed: false,
-                  listedMakerFeeBp: 0,
-                  listedPrice: info.price,
-                  listedSellerReceiveAddress: "",
+                    "2ee10fe7a8e6de60adac66cef80454899e89fd94ed0a86fe6b6ba7a2d5617180:0",
+                  listedPrice: price,
                 },
                 sellerReceiveAddress:
-                  info.seller_address,
-                //tapInternalKey: publicKey,
-                //这里是ConstructSellerPsbt签出来的，这里直接复制过来
-                //这里需要根据后端返回的base64转成hex  => bitcoin.Psbt.fromBase64(psbtBase64).toHex()
-                signedListingPSBTHex:
-                bitcoin.Psbt.fromBase64(info.psbt_base_64).toHex(),
+                  "bc1qwej4856wpnexlplm6ruwym2rq8r44tsy4zjmjc",
               },
               buyer: {
-                takerFeeBp: 0,
+                takerFeeBp: takerFee, //买家收钱，费率10%
                 buyerAddress: address,
                 buyerTokenReceiveAddress: address,
                 buyerDummyUTXOs: selectDummyUtxos,
@@ -877,57 +810,45 @@ function ConstructBuyerPsbtCard() {
                 autoFinalized: true,
               }
             );
-            console.log("signedBuyingPSBTHex===: ", signedBuyingPSBTHex);
             const signedBuyingPSBTBase64 =
               bitcoin.Psbt.fromHex(signedBuyingPSBTHex).toBase64();
-            // const buyState : signer.IOrdAPIPostPSBTBuying = {
-            //     price: 18888,
-            //     tokenId: "41b2e959819a7b31812d242b631abb07703155cb1f7e9e973f05eee12c9dd32ei0",
-            //     buyerAddress: "bc1pdmmlcs4s2aatvgz4kpzahaqrv69mcrhdatfudlv6l2gkweh6cndsx2m0jg",
-            //     buyerTokenReceiveAddress: "bc1pdmmlcs4s2aatvgz4kpzahaqrv69mcrhdatfudlv6l2gkweh6cndsx2m0jg",
-            //     signedBuyingPSBTBase64: signedBuyingPSBTBase64,
-            // }
-
-            // class demoItemProvider1 implements signer.ItemProvider {
-            //   async getTokenByOutput(
-            //     output: string
-            //   ): Promise<signer.IOrdItem | null> {
-            //     return state.seller.ordItem;
-            //   }
-            //   async getTokenById(
-            //     tokenId: string
-            //   ): Promise<signer.IOrdItem | null> {
-            //     return state.seller.ordItem;
-            //   }
-            // }
-            // signer.BuyerSigner.verifySignedBuyingPSBTBase64(buyState, new demoFeeProvider(), new demoItemProvider1())
+            console.log("signedBuyingPSBTBase64===: ", signedBuyingPSBTBase64);
+            const purchaseRes = await Post(
+              "http://localhost:3002/api/v1/tx/merge",
+              {
+                signed_buyer_psbt: signedBuyingPSBTBase64,
+                inscription_id: inscription_id,
+              }
+            );
+            console.log("purchase txHash: ", purchaseRes.data);
 
             //将卖家和买家签名后的psbt合并之后广播, 落库
-            const finalPsbt = mergeSignedBuyingPSBTBase64(
-              info.psbt_base_64,
-              signedBuyingPSBTBase64
-            );
+            // const finalPsbt = mergeSignedBuyingPSBTBase64(
+            //   "cHNidP8BAFICAAAAAYBxYdWip2tr/oYK7ZT9iZ6JVAT4zmasrWDe5qjnD+EuAAAAAAD/////AWwFAAAAAAAAFgAUdmVT004M8m+H+9D44m1DAcdargQAAAAAAAEA/VwBAQAAAAABAYzLOlJtfJKae4Lgtulnwczowp3Lh4OwDj/9/8RaQqYTAAAAAAD1////AfQBAAAAAAAAFgAUdmVT004M8m+H+9D44m1DAcdargQDQGoAcnGCdEJ1t33GeeWlBnfaFg79ciORn8J9q04aW6smO0v8+qul79PXARUQzkspua9RbIRb8ODRzWyx7wAu7dijIIzmt1fSqN6v2WaavwAzTBUwj0tNzP2GgSf0Bkcl/4qrrABjA29yZAEBGHRleHQvcGxhaW47Y2hhcnNldD11dGYtOABMXHsicCI6ImJicyIsIm9wIjoicG9zdCIsImJvYXJkIjoiT3JkaW5hbHMiLCJ0aXRsZSI6ImRhc2QiLCJjb250ZW50IjoiZGFzZHNhZGFzZGFkIiwidGFncyI6W119aCHAjOa3V9Ko3q/ZZpq/ADNMFTCPS03M/YaBJ/QGRyX/iqsAAAAAAQEf9AEAAAAAAAAWABR2ZVPTTgzyb4f70PjibUMBx1quBAEIawJHMEQCIEmKN9nVTCOYw00R23OcSsC24FyQYmW2Zr+p9ujWcrtCAiBddj1HD1vfBUGDRyhVITBYzkyH0QGgBRx6jcszz28ryoMhA+LfDG/O2bhTCkZkm8fsBqv6hjalG8rN5BUMUnFbdunfAAA=",
+            //   signedBuyingPSBTBase64
+            // );
 
-            console.log(
-              "finalPsbt: ",
-              bitcoin.Psbt.fromBase64(finalPsbt).toHex()
-            );
-            const boardCastRes = await Post(
-              "http://localhost:3001/api/v1/tx/boardCast",
-              { tx_hex: bitcoin.Psbt.fromBase64(finalPsbt).toHex(), flag: true }
-            );
-            console.log("purchase txHash: ", boardCastRes.data);
-            const recordBuyRes = await Post(
-              "http://localhost:3001/api/v1/tx/buy",
-              { 
-                inscription_id: info.inscripton_id,
-                inscription_num: "", //yw的list接口有这个数据
-                price: info.price, 
-                domain: "", //yw的list接口有这个数据
-                seller: info.seller_address,
-                buyer: address,
-               }
-            );
+            // console.log(
+            //   "finalPsbt: ",
+            //   bitcoin.Psbt.fromBase64(finalPsbt).toHex()
+            // );
+            // return;
+            // const boardCastRes = await Post(
+            //   "http://localhost:3002/api/v1/tx/broadcast",
+            //   { signed_tx_data: bitcoin.Psbt.fromBase64(finalPsbt).toHex() }
+            // );
+            // console.log("purchase txHash: ", boardCastRes.data);
+            // const recordBuyRes = await Post(
+            //   "http://localhost:3001/api/v1/tx/buy",
+            //   {
+            //     inscription_id: info.inscripton_id,
+            //     inscription_num: "", //yw的list接口有这个数据
+            //     price: info.price,
+            //     domain: "", //yw的list接口有这个数据
+            //     seller: info.seller_address,
+            //     buyer: address,
+            //    }
+            // );
           } catch (e) {
             console.log(e);
           }
@@ -961,8 +882,12 @@ function SignPsbtCard() {
         style={{ marginTop: 10 }}
         onClick={async () => {
           try {
-            const psbtResult = await (window as any).unisat.signPsbt(psbtHex);
+            const psbtResult = await (window as any).unisat.signPsbt(psbtHex, {
+              autoFinalized: true,
+            });
             setPsbtResult(psbtResult);
+            const base64Psbt = bitcoin.Psbt.fromHex(psbtResult).toBase64();
+            console.log("base64Psbt: ", base64Psbt);
           } catch (e) {
             setPsbtResult((e as any).message);
           }
@@ -993,7 +918,7 @@ async function getMeOrderInfo(
   return await res.json();
 }
 
-async function Post(url = "", data = {}) {
+export async function Post(url = "", data = {}) {
   const response = await fetch(url, {
     method: "POST",
     mode: "cors",
@@ -1014,335 +939,16 @@ async function getUnspent(address = "") {
 
   return await res.json();
 }
+async function InscriptionInfo(id = "") {
+  const url = `http://localhost:3002/api/v1/inscription/info?inscription_id=${id}`;
+  const res = await Fetch(url);
+
+  return await res.json();
+}
 async function feeRate() {
   const url = "https://mempool.space/api/v1/fees/recommended";
   const res = await Fetch(url);
   return await res.json();
-}
-async function generateUnsignedBuyingPSBTBase64(listing: signer.IListingState) {
-  const psbt = new bitcoin.Psbt({ network });
-  if (
-    !listing.buyer ||
-    !listing.buyer.buyerAddress ||
-    !listing.buyer.buyerTokenReceiveAddress
-  ) {
-    throw new InvalidArgumentError("Buyer address is not set");
-  }
-
-  if (
-    listing.buyer.buyerDummyUTXOs?.length !== 2 ||
-    !listing.buyer.buyerPaymentUTXOs
-  ) {
-    throw new InvalidArgumentError("Buyer address has not enough utxos");
-  }
-
-  let totalInput = listing.seller.ordItem.outputValue;
-
-  // Add two dummyUtxos
-  for (const dummyUtxo of listing.buyer.buyerDummyUTXOs) {
-    const input: any = {
-      hash: dummyUtxo.txid,
-      index: dummyUtxo.vout,
-      nonWitnessUtxo: dummyUtxo.tx.toBuffer(),
-    };
-
-    const p2shInputRedeemScript: any = {};
-    const p2shInputWitnessUTXO: any = {};
-
-    if (signer.isP2SHAddress(listing.buyer.buyerAddress, network)) {
-      const redeemScript = bitcoin.payments.p2wpkh({
-        pubkey: Buffer.from(listing.buyer.buyerPublicKey!, "hex"),
-      }).output;
-      const p2sh = bitcoin.payments.p2sh({
-        redeem: { output: redeemScript },
-      });
-      p2shInputWitnessUTXO.witnessUtxo = {
-        script: p2sh.output,
-        value: dummyUtxo.value,
-      } as signer.WitnessUtxo;
-      p2shInputRedeemScript.redeemScript = p2sh.redeem?.output;
-    }
-    if (isTaprootAddress(listing.buyer.buyerAddress)) {
-      input.witnessUtxo = dummyUtxo.tx.outs[dummyUtxo.vout];
-      input.tapInternalKey = toXOnly(
-        //tx.toBuffer().constructor(listing.buyer.buyerPublicKey!, 'hex'),
-        Buffer.from(listing.buyer.buyerPublicKey!, "hex")
-      );
-    }
-
-    psbt.addInput({
-      ...input,
-      ...p2shInputWitnessUTXO,
-      ...p2shInputRedeemScript,
-    });
-    totalInput += dummyUtxo.value;
-  }
-
-  // Add dummy output
-  psbt.addOutput({
-    address: listing.buyer.buyerAddress,
-    value:
-      listing.buyer.buyerDummyUTXOs[0].value +
-      listing.buyer.buyerDummyUTXOs[1].value +
-      Number(listing.seller.ordItem.location?.split(":")[2]),
-  });
-  // Add ordinal output
-  psbt.addOutput({
-    address: listing.buyer.buyerTokenReceiveAddress,
-    value: ORDINALS_POSTAGE_VALUE,
-  });
-
-  const { sellerInput, sellerOutput } = await getSellerInputAndOutput(listing);
-
-  psbt.addInput(sellerInput);
-  psbt.addOutput(sellerOutput);
-
-  // Add payment utxo inputs
-  for (const utxo of listing.buyer.buyerPaymentUTXOs) {
-    const input: any = {
-      hash: utxo.txid,
-      index: utxo.vout,
-      nonWitnessUtxo: utxo.tx.toBuffer(),
-    };
-
-    const p2shInputWitnessUTXOUn: any = {};
-    const p2shInputRedeemScriptUn: any = {};
-
-    if (signer.isP2SHAddress(listing.buyer.buyerAddress, network)) {
-      const redeemScript = bitcoin.payments.p2wpkh({
-        pubkey: Buffer.from(listing.buyer.buyerPublicKey!, "hex"),
-      }).output;
-      const p2sh = bitcoin.payments.p2sh({
-        redeem: { output: redeemScript },
-      });
-      p2shInputWitnessUTXOUn.witnessUtxo = {
-        script: p2sh.output,
-        value: utxo.value,
-      } as signer.WitnessUtxo;
-      p2shInputRedeemScriptUn.redeemScript = p2sh.redeem?.output;
-    }
-
-    if (isTaprootAddress(listing.buyer.buyerAddress)) {
-      input.witnessUtxo = utxo.tx.outs[utxo.vout];
-      input.tapInternalKey = toXOnly(
-        //tx.toBuffer().constructor(listing.buyer.buyerPublicKey!, 'hex'),
-        Buffer.from(listing.buyer.buyerPublicKey!, "hex")
-      );
-    }
-
-    psbt.addInput({
-      ...input,
-      ...p2shInputWitnessUTXOUn,
-      ...p2shInputRedeemScriptUn,
-    });
-
-    totalInput += utxo.value;
-  }
-
-  // Create a platform fee output
-  let platformFeeValue = Math.floor(
-    (listing.seller.price *
-      (listing.buyer.takerFeeBp + listing.seller.makerFeeBp)) /
-      10000
-  );
-  platformFeeValue =
-    platformFeeValue > DUMMY_UTXO_MIN_VALUE ? platformFeeValue : 0;
-
-  if (platformFeeValue > 0) {
-    psbt.addOutput({
-      address: PLATFORM_FEE_ADDRESS,
-      value: platformFeeValue,
-    });
-  }
-
-  // Create two new dummy utxo output for the next purchase
-  psbt.addOutput({
-    address: listing.buyer.buyerAddress,
-    value: DUMMY_UTXO_VALUE,
-  });
-  psbt.addOutput({
-    address: listing.buyer.buyerAddress,
-    value: DUMMY_UTXO_VALUE,
-  });
-
-  const fee = await signer.calculateTxBytesFeeWithRate(
-    psbt.txInputs.length,
-    psbt.txOutputs.length, // already taken care of the exchange output bytes calculation
-    listing.buyer.feeRate ?? 10
-  );
-  console.log("input len: ", psbt.txInputs.length);
-  console.log("output len: ", psbt.txOutputs.length);
-  console.log("fee: ", fee);
-
-  const totalOutput = psbt.txOutputs.reduce(
-    (partialSum, a) => partialSum + a.value,
-    0
-  );
-  const changeValue = totalInput - totalOutput - fee;
-  console.log("totalInput: ", totalInput);
-  console.log("totalOutput: ", totalOutput);
-  console.log("changeValue: ", changeValue);
-
-  if (changeValue < 0) {
-    throw `Your wallet address doesn't have enough funds to buy this inscription.
-Price:      ${satToBtc(listing.seller.price)} BTC
-Required:   ${satToBtc(totalOutput + fee)} BTC
-Missing:    ${satToBtc(-changeValue)} BTC`;
-  }
-
-  // Change utxo
-  if (changeValue > DUMMY_UTXO_MIN_VALUE) {
-    psbt.addOutput({
-      address: listing.buyer.buyerAddress,
-      value: changeValue,
-    });
-  }
-
-  listing.buyer.unsignedBuyingPSBTBase64 = psbt.toBase64();
-  listing.buyer.unsignedBuyingPSBTInputSize = psbt.data.inputs.length;
-  return listing;
-}
-
-async function generateUnsignedListingPSBTBase64(
-  listing: signer.IListingState
-) {
-  // check listing attributes
-  if (listing.seller.makerFeeBp < 0 || listing.seller.makerFeeBp > 1) {
-    throw new InvalidArgumentError("The makeFeeBp range should be [0,1].");
-  }
-  const psbt = new bitcoin.Psbt({ network });
-  const [ordinalUtxoTxId, ordinalUtxoVout] =
-    listing.seller.ordItem.output.split(":");
-
-  const tx = bitcoin.Transaction.fromHex(
-    await signer.getTxHexById(ordinalUtxoTxId)
-  );
-  // No need to add this witness if the seller is using taproot
-  if (!listing.seller.tapInternalKey) {
-    for (const output in tx.outs) {
-      try {
-        tx.setWitness(parseInt(output), []);
-      } catch {}
-    }
-  }
-  const input: any = {
-    hash: ordinalUtxoTxId,
-    index: parseInt(ordinalUtxoVout),
-    nonWitnessUtxo: tx.toBuffer(),
-    // No problem in always adding a witnessUtxo here
-    witnessUtxo: tx.outs[parseInt(ordinalUtxoVout)],
-    sighashType:
-      bitcoin.Transaction.SIGHASH_SINGLE |
-      bitcoin.Transaction.SIGHASH_ANYONECANPAY,
-  };
-  // for p2sh account
-  const p2shInputRedeemScript: any = {};
-  const p2shInputWitnessUTXO: any = {};
-  if (signer.isP2SHAddress(listing.seller.sellerOrdAddress, network)) {
-    const redeemScript = bitcoin.payments.p2wpkh({
-      pubkey: Buffer.from(listing.seller.sellerPublicKey!, "hex"),
-    }).output;
-    const p2sh = bitcoin.payments.p2sh({
-      redeem: { output: redeemScript },
-    });
-    p2shInputWitnessUTXO.witnessUtxo = {
-      script: p2sh.output,
-      value: listing.seller.ordItem.outputValue,
-    } as signer.WitnessUtxo;
-    p2shInputRedeemScript.redeemScript = p2sh.redeem?.output;
-  }
-  // // If taproot is used, we need to add the internal key
-  // if (listing.seller.tapInternalKey) {
-  //   input.witnessUtxo = tx.outs[parseInt(ordinalUtxoVout)];
-  //   input.tapInternalKey = toXOnly(
-  //     tx.toBuffer().constructor(listing.seller.tapInternalKey, 'hex'),
-  //   );
-  // }
-
-  if (listing.seller.tapInternalKey) {
-    input.tapInternalKey = toXOnly(
-      tx.toBuffer().constructor(listing.seller.tapInternalKey, "hex")
-    );
-  }
-  //psbt.addInput(input);
-  psbt.addInput({
-    ...input,
-    ...p2shInputRedeemScript,
-    ...p2shInputWitnessUTXO,
-  });
-  const sellerOutput: number =
-    listing.seller.price + listing.seller.ordItem.outputValue;
-
-  console.log("sellerOutput", sellerOutput);
-  psbt.addOutput({
-    address: listing.seller.sellerReceiveAddress,
-    value: sellerOutput,
-  });
-  listing.seller.unsignedListingPSBTBase64 = psbt.toBase64();
-  return listing;
-}
-
-async function getSellerInputAndOutput(listing: signer.IListingState) {
-  const [ordinalUtxoTxId, ordinalUtxoVout] =
-    listing.seller.ordItem.output.split(":");
-  const res = await Post("http://localhost:3001/api/v1/tx/raw", {
-    tx_hash: ordinalUtxoTxId,
-  });
-  const tx = bitcoin.Transaction.fromHex(res.data);
-  // No need to add this witness if the seller is using taproot
-  if (!listing.seller.tapInternalKey) {
-    for (let outputIndex = 0; outputIndex < tx.outs.length; outputIndex++) {
-      try {
-        tx.setWitness(outputIndex, []);
-      } catch {}
-    }
-  }
-
-  const sellerInput: any = {
-    hash: ordinalUtxoTxId,
-    index: parseInt(ordinalUtxoVout),
-    nonWitnessUtxo: tx.toBuffer(),
-    // No problem in always adding a witnessUtxo here
-    witnessUtxo: tx.outs[parseInt(ordinalUtxoVout)],
-  };
-  // If taproot is used, we need to add the internal key
-  if (listing.seller.tapInternalKey) {
-    sellerInput.tapInternalKey = toXOnly(
-      tx.toBuffer().constructor(listing.seller.tapInternalKey, "hex")
-    );
-  }
-
-  const ret = {
-    sellerInput,
-    sellerOutput: {
-      address: listing.seller.sellerReceiveAddress,
-      value: listing.seller.price + listing.seller.ordItem.outputValue,
-    },
-  };
-
-  return ret;
-}
-function mergeSignedBuyingPSBTBase64(
-  signedListingPSBTBase64: string,
-  signedBuyingPSBTBase64: string
-): string {
-  const sellerSignedPsbt = bitcoin.Psbt.fromBase64(signedListingPSBTBase64);
-  const buyerSignedPsbt = bitcoin.Psbt.fromBase64(signedBuyingPSBTBase64);
-
-  (buyerSignedPsbt.data.globalMap.unsignedTx as any).tx.ins[
-    BUYING_PSBT_SELLER_SIGNATURE_INDEX
-  ] = (sellerSignedPsbt.data.globalMap.unsignedTx as any).tx.ins[0];
-  buyerSignedPsbt.data.inputs[BUYING_PSBT_SELLER_SIGNATURE_INDEX] =
-    sellerSignedPsbt.data.inputs[0];
-
-  return buyerSignedPsbt.toBase64();
-}
-
-function isTaprootAddress(address: any) {
-  if (address.startsWith("tb1p") || address.startsWith("bc1p")) {
-    return true;
-  }
-  return false;
 }
 
 export default App;
