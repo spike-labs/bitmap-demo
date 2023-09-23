@@ -427,7 +427,7 @@ function ConstructSellerPsbtCard() {
             const state: IListingState = {
               //默认值的都是不需要的
               seller: {
-                makerFeeBp: 0,
+                makerFeeBp: 0, //卖家先不收手续费
                 sellerOrdAddress: address,
                 // price需要卖家输入
                 price: 888,
@@ -435,7 +435,7 @@ function ConstructSellerPsbtCard() {
                   id: bitmapInfo.data.id,
                   owner: address,
                   location: bitmapInfo.data.location,
-                  outputValue: parseInt(bitmapInfo.data.value),
+                  outputValue: bitmapInfo.data.value, //这里是idclub的新接口，返回的是number
                   output: bitmapInfo.data.output,
                 },
                 sellerReceiveAddress: address,
@@ -514,7 +514,7 @@ function ConstructBuyerPsbtCard() {
               "2ee10fe7a8e6de60adac66cef80454899e89fd94ed0a86fe6b6ba7a2d5617180i0";
             const price = 1388;
             const outputValue = 500;
-            const takerFee = 0.1; //买家平台费10%
+            const takerFee = 0.01; //买家平台费1%
             //这个接口的作用是查询这个utxo是否包含铭文，我们在前面简单的直接通过value的值来判断，这里直接返回null表明没有包含铭文
             class demoItemProvider implements signer.ItemProvider {
               async getTokenByOutput(
@@ -529,7 +529,8 @@ function ConstructBuyerPsbtCard() {
               }
             }
             let unspentList: any[] = [];
-            await Post("http://localhost:3002/api/v1/tx/utxo", {
+            //这个有改动，和铭刻的时候返回的数据有差别
+            await Post("http://localhost:3002/api/v1/market/utxo", {
               address: address,
             }).then((data) => {
               console.log("data: ", data);
@@ -537,7 +538,7 @@ function ConstructBuyerPsbtCard() {
               data.data.forEach((item: any) => {
                 const status: TxStatus = {
                   confirmed: true,
-                  block_height: item.block_height,
+                  block_height: item.block_height,//这些数据都没用，凑数的
                   block_hash: "",
                   block_time: 0,
                 };
@@ -556,12 +557,11 @@ function ConstructBuyerPsbtCard() {
               unspentList,
               new demoItemProvider()
             );
-            //将>1000 && != 10000的utxo过滤出来，以用于购买铭文，既不会和对齐的utxo重复，也不会把包含铭文的utxo错用了
+            //将>=10000面值的utxo过滤出来用于购买铭文
             unspentList = unspentList
               .filter(
                 (x) =>
-                  x.value > DUMMY_UTXO_MAX_VALUE &&
-                  x.value !== ORDINALS_POSTAGE_VALUE
+                  x.value >= 10000
               )
               .sort((a, b) => b.value - a.value);
 
@@ -778,7 +778,7 @@ function ConstructBuyerPsbtCard() {
                   "bc1qwej4856wpnexlplm6ruwym2rq8r44tsy4zjmjc",
               },
               buyer: {
-                takerFeeBp: takerFee, //买家收钱，费率10%
+                takerFeeBp: takerFee, //买家收钱，费率1%
                 buyerAddress: address,
                 buyerTokenReceiveAddress: address,
                 buyerDummyUTXOs: selectDummyUtxos,
