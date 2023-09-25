@@ -19,12 +19,12 @@ import {
 } from "./constant";
 import { IListingState, TxStatus, AddressTxsUtxo } from "./interfaces";
 import { InvalidArgumentError } from "./interfaces";
-import { satToBtc, toXOnly, isTaprootAddress } from "./util";
+import { mapUtxos, toXOnly, isTaprootAddress, calculateTxBytesFeeWithRate } from "./util";
 import { BatchMigrateCard } from "./batch_migrate";
 import {
   generateUnsignedListingPSBTBase64,
   generateUnsignedBuyingPSBTBase64,
-  mergeSignedBuyingPSBTBase64,
+  selectDummyUTXOs,
 } from "./psbt";
 
 const network =
@@ -421,7 +421,7 @@ function ConstructSellerPsbtCard() {
           try {
             //用户选择一个挂单
             const inscription_id =
-              "2ee10fe7a8e6de60adac66cef80454899e89fd94ed0a86fe6b6ba7a2d5617180i0";
+              "f24f62c8606f91cfd222d4d66c1a99d122d170e0de287a4130ecbdfc70f6712ei0";
             const bitmapInfo = await InscriptionInfo(inscription_id);
             console.log("bitmapInfo: ", bitmapInfo.data);
             const state: IListingState = {
@@ -511,9 +511,9 @@ function ConstructBuyerPsbtCard() {
           setPublicKey(publicKey);
           try {
             const inscription_id =
-              "2ee10fe7a8e6de60adac66cef80454899e89fd94ed0a86fe6b6ba7a2d5617180i0";
-            const price = 1388;
-            const outputValue = 500;
+              "f24f62c8606f91cfd222d4d66c1a99d122d170e0de287a4130ecbdfc70f6712ei0";
+            const price = 546;
+            const outputValue = 546;
             const takerFee = 0.01; //买家平台费1%
             //这个接口的作用是查询这个utxo是否包含铭文，我们在前面简单的直接通过value的值来判断，这里直接返回null表明没有包含铭文
             class demoItemProvider implements signer.ItemProvider {
@@ -553,9 +553,8 @@ function ConstructBuyerPsbtCard() {
             });
             console.log("unspentList: ", unspentList);
             //挑选两个600sats-1000sats的utxo对齐用
-            let dummyUtxo = await signer.BuyerSigner.selectDummyUTXOs(
+            let dummyUtxo = await selectDummyUTXOs(
               unspentList,
-              new demoItemProvider()
             );
             //将>=10000面值的utxo过滤出来用于购买铭文
             unspentList = unspentList
@@ -578,18 +577,21 @@ function ConstructBuyerPsbtCard() {
             if (dummyUtxo == null) {
               console.log("dummyUtxo not enough");
               const psbt = new bitcoin.Psbt({ network });
+            
               for (const utxo of unspentList) {
                 selectedUtxos.push(utxo);
                 selectedAmount += utxo.value;
-                setupfee = signer.calculateTxBytesFeeWithRate(
+                console.log("selectedUtxos.length : ", selectedUtxos.length)
+               
+                setupfee = calculateTxBytesFeeWithRate(
                   selectedUtxos.length,
                   3, //两个对齐 + 一个找零
-                  feeRateRes.minimumFee
+                  feeRateRes.fastestFee,
                 );
-                purchasefee = signer.calculateTxBytesFeeWithRate(
+                purchasefee = calculateTxBytesFeeWithRate(
                   4, //两个对齐 + 一个买 + 一个卖家的铭文
-                  6, //固定的
-                  feeRateRes.minimumFee
+                  7, //固定的
+                  feeRateRes.fastestFee
                 );
 
                 //价格 + 两个600的对齐utxo * 2 + gas
@@ -616,7 +618,7 @@ function ConstructBuyerPsbtCard() {
                 return;
               }
               let totalInput = 0;
-              const setupPaymentUtxo = await signer.mapUtxos(selectedUtxos);
+              const setupPaymentUtxo = await mapUtxos(selectedUtxos);
               //构造setup tx的input
               for (const utxo of setupPaymentUtxo) {
                 const input: any = {
@@ -737,11 +739,12 @@ function ConstructBuyerPsbtCard() {
               for (const utxo of unspentList) {
                 selectedUtxos.push(utxo);
                 selectedAmount += utxo.value;
-                purchasefee = signer.calculateTxBytesFeeWithRate(
+                purchasefee = calculateTxBytesFeeWithRate(
                   3 + selectedUtxos.length,
-                  6,
-                  feeRateRes.minimumFee
+                  7,
+                  feeRateRes.fastestFee
                 );
+                console.log(purchasefee)
                 if (selectedAmount > price + outputValue + purchasefee) {
                   break;
                 }
@@ -755,7 +758,7 @@ function ConstructBuyerPsbtCard() {
               } else {
                 selectDummyUtxos = dummyUtxo;
               }
-              selectedPaymentUtxo = await signer.mapUtxos(selectedUtxos);
+              selectedPaymentUtxo = await mapUtxos(selectedUtxos);
             }
 
             console.log("selectedPaymentUtxo-----: ", selectedPaymentUtxo);
@@ -765,17 +768,17 @@ function ConstructBuyerPsbtCard() {
                 sellerOrdAddress: "",
                 price: price - outputValue,
                 ordItem: {
-                  id: "2ee10fe7a8e6de60adac66cef80454899e89fd94ed0a86fe6b6ba7a2d5617180i0",
-                  owner: "bc1qwej4856wpnexlplm6ruwym2rq8r44tsy4zjmjc",
+                  id: "f24f62c8606f91cfd222d4d66c1a99d122d170e0de287a4130ecbdfc70f6712ei0",
+                  owner: "bc1pu637fe5t20njrsuulsgwvvmq34s6w53hleavm3aesxelr4p8u6zsqvw88r",
                   location:
-                    "2ee10fe7a8e6de60adac66cef80454899e89fd94ed0a86fe6b6ba7a2d5617180:0:0",
+                  "f24f62c8606f91cfd222d4d66c1a99d122d170e0de287a4130ecbdfc70f6712e:0:0",
                   outputValue: outputValue,
                   output:
-                    "2ee10fe7a8e6de60adac66cef80454899e89fd94ed0a86fe6b6ba7a2d5617180:0",
+                    "f24f62c8606f91cfd222d4d66c1a99d122d170e0de287a4130ecbdfc70f6712e:0",
                   listedPrice: price,
                 },
                 sellerReceiveAddress:
-                  "bc1qwej4856wpnexlplm6ruwym2rq8r44tsy4zjmjc",
+                  "bc1pu637fe5t20njrsuulsgwvvmq34s6w53hleavm3aesxelr4p8u6zsqvw88r",
               },
               buyer: {
                 takerFeeBp: takerFee, //买家收钱，费率1%
@@ -784,7 +787,7 @@ function ConstructBuyerPsbtCard() {
                 buyerDummyUTXOs: selectDummyUtxos,
                 buyerPaymentUTXOs: selectedPaymentUtxo,
                 buyerPublicKey: publicKey,
-                feeRate: feeRateRes.minimumFee,
+                feeRate: feeRateRes.fastestFee,
                 platformFeeAddress: "",
               },
             };

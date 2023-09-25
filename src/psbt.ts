@@ -11,9 +11,9 @@ import {
 } from "./constant";
 import * as signer from "@mixobitc/msigner";
 import * as bitcoin from "bitcoinjs-lib";
-import { toXOnly, isP2SHAddress, satToBtc, isTaprootAddress } from "./util";
+import { toXOnly, isP2SHAddress, satToBtc, isTaprootAddress, calculateTxBytesFeeWithRate, mapUtxos} from "./util";
 import { Post } from "./App";
-import { InvalidArgumentError, IListingState, WitnessUtxo } from "./interfaces";
+import { InvalidArgumentError, IListingState, WitnessUtxo, AddressTxsUtxo } from "./interfaces";
 
 const network =
   BTC_NETWORK === "mainnet"
@@ -181,13 +181,13 @@ export async function generateUnsignedBuyingPSBTBase64(listing: IListingState) {
     value: DUMMY_UTXO_VALUE,
   });
 
-  const fee = await signer.calculateTxBytesFeeWithRate(
+  const fee = calculateTxBytesFeeWithRate(
     psbt.txInputs.length,
-    psbt.txOutputs.length, // already taken care of the exchange output bytes calculation
+    psbt.txOutputs.length + 1, //+1 加的是找零的那个长度 // already taken care of the exchange output bytes calculation
     listing.buyer.feeRate ?? 10
   );
   console.log("input len: ", psbt.txInputs.length);
-  console.log("output len: ", psbt.txOutputs.length);
+  console.log("output len: ", psbt.txOutputs.length + 1);
   console.log("fee: ", fee);
 
   const totalOutput = psbt.txOutputs.reduce(
@@ -330,4 +330,18 @@ async function getSellerInputAndOutput(listing: IListingState) {
   };
 
   return ret;
+}
+
+export async function selectDummyUTXOs(utxos: AddressTxsUtxo[]) {
+  const result = [];
+  for (const utxo of utxos) {
+    if (utxo.value >= 600 &&
+      utxo.value <= 1000) {
+      result.push((await mapUtxos([utxo]))[0]);
+      if (result.length === 2)
+          return result;
+  }
+  }  
+ 
+  return null;
 }
