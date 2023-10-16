@@ -17,14 +17,21 @@ import {
   ORDINALS_POSTAGE_VALUE,
   PLATFORM_FEE_ADDRESS,
 } from "./constant";
-import { IListingState, TxStatus, AddressTxsUtxo } from "./interfaces";
+import { IListingState, TxStatus, AddressTxsUtxo, ISweepItem, ISweepState} from "./interfaces";
 import { InvalidArgumentError } from "./interfaces";
-import { mapUtxos, toXOnly, isTaprootAddress, calculateTxBytesFeeWithRate } from "./util";
+import {
+  mapUtxos,
+  toXOnly,
+  isTaprootAddress,
+  calculateTxBytesFeeWithRate,
+} from "./util";
 import { BatchMigrateCard } from "./batch_migrate";
 import {
   generateUnsignedListingPSBTBase64,
   generateUnsignedBuyingPSBTBase64,
   selectDummyUTXOs,
+  selectSweepDummyUTXOs,
+  generateUnsignedSweepPSBTBase64,
 } from "./psbt";
 
 const network =
@@ -197,6 +204,7 @@ function App() {
             <SignPsbtCard />
             <ConstructSellerPsbtCard />
             <ConstructBuyerPsbtCard />
+            <SweepCard />
             <BatchMigrateCard />
             {owBitmapOrderInfo.map((item: any) => {
               return (
@@ -538,7 +546,7 @@ function ConstructBuyerPsbtCard() {
               data.data.forEach((item: any) => {
                 const status: TxStatus = {
                   confirmed: true,
-                  block_height: item.block_height,//这些数据都没用，凑数的
+                  block_height: item.block_height, //这些数据都没用，凑数的
                   block_hash: "",
                   block_time: 0,
                 };
@@ -553,15 +561,10 @@ function ConstructBuyerPsbtCard() {
             });
             console.log("unspentList: ", unspentList);
             //挑选两个600sats-1000sats的utxo对齐用
-            let dummyUtxo = await selectDummyUTXOs(
-              unspentList,
-            );
+            let dummyUtxo = await selectDummyUTXOs(unspentList);
             //将>=10000面值的utxo过滤出来用于购买铭文
             unspentList = unspentList
-              .filter(
-                (x) =>
-                  x.value >= 10000
-              )
+              .filter((x) => x.value >= 10000)
               .sort((a, b) => b.value - a.value);
 
             console.log("dummyUtxo: ", dummyUtxo);
@@ -577,16 +580,16 @@ function ConstructBuyerPsbtCard() {
             if (dummyUtxo == null) {
               console.log("dummyUtxo not enough");
               const psbt = new bitcoin.Psbt({ network });
-            
+
               for (const utxo of unspentList) {
                 selectedUtxos.push(utxo);
                 selectedAmount += utxo.value;
-                console.log("selectedUtxos.length : ", selectedUtxos.length)
-               
+                console.log("selectedUtxos.length : ", selectedUtxos.length);
+
                 setupfee = calculateTxBytesFeeWithRate(
                   selectedUtxos.length,
                   3, //两个对齐 + 一个找零
-                  feeRateRes.fastestFee,
+                  feeRateRes.fastestFee
                 );
                 purchasefee = calculateTxBytesFeeWithRate(
                   4, //两个对齐 + 一个买 + 一个卖家的铭文
@@ -744,7 +747,7 @@ function ConstructBuyerPsbtCard() {
                   7,
                   feeRateRes.fastestFee
                 );
-                console.log(purchasefee)
+                console.log(purchasefee);
                 if (selectedAmount > price + outputValue + purchasefee) {
                   break;
                 }
@@ -769,9 +772,10 @@ function ConstructBuyerPsbtCard() {
                 price: price - outputValue,
                 ordItem: {
                   id: "f24f62c8606f91cfd222d4d66c1a99d122d170e0de287a4130ecbdfc70f6712ei0",
-                  owner: "bc1pu637fe5t20njrsuulsgwvvmq34s6w53hleavm3aesxelr4p8u6zsqvw88r",
+                  owner:
+                    "bc1pu637fe5t20njrsuulsgwvvmq34s6w53hleavm3aesxelr4p8u6zsqvw88r",
                   location:
-                  "f24f62c8606f91cfd222d4d66c1a99d122d170e0de287a4130ecbdfc70f6712e:0:0",
+                    "f24f62c8606f91cfd222d4d66c1a99d122d170e0de287a4130ecbdfc70f6712e:0:0",
                   outputValue: outputValue,
                   output:
                     "f24f62c8606f91cfd222d4d66c1a99d122d170e0de287a4130ecbdfc70f6712e:0",
@@ -897,6 +901,360 @@ function SignPsbtCard() {
         }}
       >
         Sign Psbt
+      </Button>
+    </Card>
+  );
+}
+
+function SweepCard() {
+  const [psbtHex, setPsbtHex] = useState("");
+  const [txid, setTxid] = useState("");
+  const [publicKey, setPublicKey] = useState("");
+  const [address, setAddress] = useState("");
+  return (
+    <Card size="small" title="sweep card" style={{ width: 300, margin: 10 }}>
+      <Button
+        style={{ marginTop: 10 }}
+        onClick={async () => {
+          const unisat = (window as any).unisat;
+          const [address] = await unisat.getAccounts();
+          setAddress(address);
+
+          const publicKey = await unisat.getPublicKey();
+          setPublicKey(publicKey);
+          try {
+            const inscription_id_list = [
+              "ee51630efc1a1ebdd363a924fd93621494ca464b16fbafcd5c59ebad5f270d8ai0",
+              "804e1a175cb2cc95db5244bb90e0fa9cbb737f3b5d510efb4a46f63d9a2cffdei0",
+              "8c54799752dcedccc1bae8b8eac971fc7beec6cd8c9576ca958ba02e1d8fdbd3i0", //这里拿三个出来测试，正常线上是用户选择哪几个
+            ];
+
+            if (inscription_id_list.length > 9) {
+              //参考magiceden，一次最多买九个
+              return;
+            }
+            const result = [];
+            for (const id of inscription_id_list) {
+              const info = await InscriptionInfo(id); //这里为了简化流程，去查了第三方，正常线上这些信息是从marketplace列表信息拿 包括price
+              result.push(info.data);
+            }
+            console.log("result: ", result);
+
+            const price = 550; //这里所有的铭文price写死 550聪
+            const outputValue = 546; //这里所有的铭文outputValue写死 546聪
+            const takerFee = 0.01; //买家平台费1%
+            //这个接口的作用是查询这个utxo是否包含铭文，我们在前面简单的直接通过value的值来判断，这里直接返回null表明没有包含铭文
+            class demoItemProvider implements signer.ItemProvider {
+              async getTokenByOutput(
+                output: string
+              ): Promise<signer.IOrdItem | null> {
+                return null;
+              }
+              async getTokenById(
+                tokenId: string
+              ): Promise<signer.IOrdItem | null> {
+                return null;
+              }
+            }
+            let unspentList: any[] = [];
+            //这个有改动，和铭刻的时候返回的数据有差别
+            await Post("http://localhost:3002/api/v1/market/utxo", {
+              address: address,
+            }).then((data) => {
+              console.log("data: ", data);
+
+              data.data.forEach((item: any) => {
+                const status: TxStatus = {
+                  confirmed: true,
+                  block_height: item.block_height, //这些数据都没用，凑数的
+                  block_hash: "",
+                  block_time: 0,
+                };
+                const utxo: AddressTxsUtxo = {
+                  txid: item.tx_id,
+                  vout: item.vout,
+                  value: item.value,
+                  status: status,
+                };
+                unspentList.push(utxo);
+              });
+            });
+            console.log("unspentList: ", unspentList);
+            //挑选(要买的铭文数量 + 1)个600sats-1000sats的utxo对齐用
+            let dummyUtxo = await selectSweepDummyUTXOs(
+              unspentList,
+              inscription_id_list.length
+            );
+            //将>=10000面值的utxo过滤出来用于购买铭文
+            unspentList = unspentList
+              .filter((x) => x.value >= 10000)
+              .sort((a, b) => b.value - a.value);
+
+            console.log("dummyUtxo: ", dummyUtxo);
+            let selectedUtxos = [];
+            let selectedAmount = 0;
+            let selectDummyUtxos: signer.utxo[] | undefined;
+            let selectedPaymentUtxo: signer.utxo[] = [];
+            const feeRateRes = await feeRate();
+            let setupfee = 0;
+            let purchasefee = 0;
+            console.log("feeRateRes: ", feeRateRes);
+            //如果没有对齐的铭文，就自己构造setup交易创造两个
+            if (dummyUtxo == null) {
+              console.log("dummyUtxo not enough");
+              const psbt = new bitcoin.Psbt({ network });
+
+              for (const utxo of unspentList) {
+                selectedUtxos.push(utxo);
+                selectedAmount += utxo.value;
+                console.log("selectedUtxos.length : ", selectedUtxos.length);
+
+                setupfee = calculateTxBytesFeeWithRate(
+                  selectedUtxos.length,
+                  11, //十个对齐 + 一个找零
+                  feeRateRes.fastestFee
+                );
+                purchasefee = calculateTxBytesFeeWithRate(
+                  inscription_id_list.length * 2 + 1, // N+1个对齐 + N个卖家的铭文 + 一个买
+                  inscription_id_list.length * 2 + 13, // 一个合并 + N个铭文 + 10个对齐 + N个给卖家的钱 + 平台手续费 + 找零
+                  feeRateRes.fastestFee
+                );
+
+                //价格 + 600的对齐utxo * 10 + gas
+                if (
+                  selectedAmount >
+                  (price + outputValue) * inscription_id_list.length +
+                    price * inscription_id_list.length * takerFee +
+                    DUMMY_UTXO_VALUE * 10 +
+                    purchasefee +
+                    setupfee
+                ) {
+                  break;
+                }
+              }
+              if (
+                selectedAmount <
+                (price + outputValue) * inscription_id_list.length +
+                  price * inscription_id_list.length * takerFee +
+                  DUMMY_UTXO_VALUE * 10 +
+                  purchasefee +
+                  setupfee
+              ) {
+                console.log("not enough btc");
+                return;
+              }
+              let totalInput = 0;
+              const setupPaymentUtxo = await mapUtxos(selectedUtxos);
+              //构造setup tx的input
+              for (const utxo of setupPaymentUtxo) {
+                const input: any = {
+                  hash: utxo.txid,
+                  index: utxo.vout,
+                  nonWitnessUtxo: utxo.tx.toBuffer(),
+                };
+
+                const p2shInputRedeemScript: any = {};
+                const p2shInputWitnessUTXO: any = {};
+
+                if (signer.isP2SHAddress(address, network)) {
+                  const redeemScript = bitcoin.payments.p2wpkh({
+                    pubkey: Buffer.from(publicKey!, "hex"),
+                  }).output;
+                  const p2sh = bitcoin.payments.p2sh({
+                    redeem: { output: redeemScript },
+                  });
+                  p2shInputWitnessUTXO.witnessUtxo = {
+                    script: p2sh.output,
+                    value: utxo.value,
+                  } as signer.WitnessUtxo;
+                  p2shInputRedeemScript.redeemScript = p2sh.redeem?.output;
+                }
+                if (isTaprootAddress(address)) {
+                  input.witnessUtxo = utxo.tx.outs[utxo.vout];
+                  input.tapInternalKey = toXOnly(
+                    //tx.toBuffer().constructor(listing.buyer.buyerPublicKey!, 'hex'),
+                    Buffer.from(publicKey!, "hex")
+                  );
+                }
+
+                psbt.addInput({
+                  ...input,
+                  ...p2shInputWitnessUTXO,
+                  ...p2shInputRedeemScript,
+                });
+                totalInput += utxo.value;
+              }
+              //构造出10个对齐的和找零的
+              for (var i = 0; i < 10; i++) {
+                psbt.addOutput({
+                  address: address,
+                  value: DUMMY_UTXO_VALUE,
+                });
+              }
+
+              const change = totalInput - DUMMY_UTXO_VALUE * 10 - setupfee;
+              psbt.addOutput({
+                address: address,
+                value: change,
+              });
+              const setUpPSBTHex = await (window as any).unisat.signPsbt(
+                psbt.toHex(),
+                {
+                  autoFinalized: true,
+                }
+              );
+              console.log("setUpPSBTHex: ", setUpPSBTHex);
+
+              const p = bitcoin.Psbt.fromHex(setUpPSBTHex);
+              console.log("raw: ", p.extractTransaction().toHex());
+              //广播并拿到setup txhash
+              const boardCastRes = await Post(
+                "http://localhost:3002/api/v1/tx/broadcast",
+                { signed_tx_data: setUpPSBTHex }
+              );
+              console.log("setup txHash: ", boardCastRes.data);
+
+              const rawTxHex = p.extractTransaction().toHex();
+              let pendingDummyUtxos: signer.utxo[] = [];
+              let pendingPaymentUtxos: signer.utxo[] = [];
+
+              for (var i = 0; i <= inscription_id_list.length; i++) {
+                pendingDummyUtxos.push({
+                  txid: boardCastRes.data,
+                  vout: i,
+                  value: DUMMY_UTXO_VALUE,
+                  status: {
+                    confirmed: false,
+                    block_height: 0,
+                    block_hash: "",
+                    block_time: 0,
+                  },
+                  tx: bitcoin.Transaction.fromHex(rawTxHex),
+                });
+              }
+              pendingPaymentUtxos.push({
+                txid: boardCastRes.data,
+                vout: 10,
+                value: change,
+                status: {
+                  confirmed: false,
+                  block_height: 0,
+                  block_hash: "",
+                  block_time: 0,
+                },
+                tx: bitcoin.Transaction.fromHex(rawTxHex),
+              });
+              console.log("pendingPaymentUtxos: ", pendingPaymentUtxos);
+              selectedPaymentUtxo = pendingPaymentUtxos;
+              console.log("selectedPaymentUtxo: ", selectedPaymentUtxo);
+              selectDummyUtxos = pendingDummyUtxos;
+            } else {
+              //有足够的对齐的铭文就直接用
+              console.log("dummyUtxo: ", dummyUtxo);
+              for (const utxo of unspentList) {
+                selectedUtxos.push(utxo);
+                selectedAmount += utxo.value;
+                purchasefee = calculateTxBytesFeeWithRate(
+                  inscription_id_list.length * 2 + 1, // N+1个对齐 + N个卖家的铭文 + 一个买
+                  inscription_id_list.length * 2 + 13, // 一个合并 + N个铭文 + 10个对齐 + N个给卖家的钱 + 平台手续费 + 找零
+                  feeRateRes.fastestFee
+                );
+                console.log(purchasefee);
+                if (
+                  selectedAmount >
+                  (price + outputValue) * inscription_id_list.length +
+                    price * inscription_id_list.length * takerFee +
+                    purchasefee
+                ) {
+                  break;
+                }
+              }
+              if (
+                selectedAmount <
+                (price + outputValue) * inscription_id_list.length +
+                  price * inscription_id_list.length * takerFee +
+                  purchasefee
+              ) {
+                console.log("not enough btc");
+                return;
+              }
+              if (dummyUtxo === null) {
+                selectDummyUtxos = undefined;
+              } else {
+                selectDummyUtxos = dummyUtxo;
+              }
+              selectedPaymentUtxo = await mapUtxos(selectedUtxos);
+            }
+
+            console.log("selectedPaymentUtxo-----: ", selectedPaymentUtxo);
+            let ordItem : ISweepItem[] = [];
+            for (const r of result) {
+              const item : ISweepItem = {
+                id: r.id,
+                owner: r.address,
+                location: r.location,
+                output: r.output,
+                outputValue: r.value,
+                price: 550,
+                sellerReceiveAddress: r.address,
+              }
+              ordItem.push(item)
+            } 
+
+            const state: ISweepState = {
+              seller: ordItem,
+              buyer: {
+                takerFeeBp: takerFee, //买家收钱，费率1%
+                buyerAddress: address,
+                buyerTokenReceiveAddress: address,
+                buyerDummyUTXOs: selectDummyUtxos,
+                buyerPaymentUTXOs: selectedPaymentUtxo,
+                buyerPublicKey: publicKey,
+                feeRate: feeRateRes.fastestFee,
+                platformFeeAddress: "bc1pjutzl7wrvr8qt3vs0xn0xjyh2ezj3mhq2m0u7f2f8qarq9ng8w9qvm6g22",
+              },
+            };
+            const unsignedBuyingPSBTBase64Res =
+              await generateUnsignedSweepPSBTBase64(state);
+            console.log(
+              "UnsignedBuyingPSBTBase64: ",
+              unsignedBuyingPSBTBase64Res.buyer?.unsignedBuyingPSBTBase64
+            );
+            if (
+              unsignedBuyingPSBTBase64Res.buyer?.unsignedBuyingPSBTBase64 ===
+              undefined
+            ) {
+              return;
+            }
+            const unsignedBuyingPSBTHex = bitcoin.Psbt.fromBase64(
+              unsignedBuyingPSBTBase64Res.buyer.unsignedBuyingPSBTBase64
+            ).toHex();
+            console.log("unsignedBuyingPSBTHex===: ", unsignedBuyingPSBTHex);
+            const signedBuyingPSBTHex = await (window as any).unisat.signPsbt(
+              unsignedBuyingPSBTHex,
+              {
+                autoFinalized: true,
+              }
+            );
+            const signedBuyingPSBTBase64 =
+              bitcoin.Psbt.fromHex(signedBuyingPSBTHex).toBase64();
+            console.log("signedBuyingPSBTBase64===: ", signedBuyingPSBTBase64);
+            
+            const purchaseRes = await Post(
+              "http://localhost:3002/api/v1/tx/sweep",
+              {
+                signed_buyer_psbt: signedBuyingPSBTBase64,
+                inscription_id_list: inscription_id_list,
+              }
+            );
+            console.log("purchase txHash: ", purchaseRes.data);
+          
+          } catch (e) {
+            console.log(e);
+          }
+        }}
+      >
+        sweep card
       </Button>
     </Card>
   );

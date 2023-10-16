@@ -41,6 +41,37 @@ export interface IListingState {
   };
 }
 
+export interface ISweepState {
+  seller: ISweepItem[];
+  buyer?: {
+    takerFeeBp: number;
+    buyerAddress: string;
+    buyerTokenReceiveAddress: string;
+    feeRateTier?: string;
+    feeRate?: number;
+    buyerPublicKey?: string;
+    unsignedBuyingPSBTBase64?: string;
+    unsignedBuyingPSBTInputSize?: number;
+    signedBuyingPSBTHex?: string;
+    buyerDummyUTXOs?: utxo[];
+    buyerPaymentUTXOs?: utxo[];
+    mergedSignedBuyingPSBTHex?: string;
+    platformFeeAddress?: string;
+    txHex?: string;
+  };
+}
+
+export interface ISweepItem {
+  id: string;
+  owner: string;
+  location?: string;
+  output: string;
+  outputValue: number;
+  price: number;
+  sellerReceiveAddress: string;
+  tapInternalKey?: string;
+}
+
 export interface IOrdItem {
   id: string;
   owner: string;
