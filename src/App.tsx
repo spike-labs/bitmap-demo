@@ -202,6 +202,7 @@ function App() {
               </div>
             </Card>
             <SignPsbtCard />
+            <SignBase64PsbtCard />
             <ConstructSellerPsbtCard />
             <ConstructBuyerPsbtCard />
             <SweepCard />
@@ -429,7 +430,9 @@ function ConstructSellerPsbtCard() {
           try {
             //用户选择一个挂单
             const inscription_id =
-              "f24f62c8606f91cfd222d4d66c1a99d122d170e0de287a4130ecbdfc70f6712ei0";
+              "c7dfdff40591cd277ea3ba10fa08b422c6664b64428a4aa01c0936d3cf0aa647i0";
+              //"0de393ca5bece5c17a4efd394804b0d857aee04d5e521a0f7e594870b00f9499i0";
+              //"f24f62c8606f91cfd222d4d66c1a99d122d170e0de287a4130ecbdfc70f6712ei0"
             const bitmapInfo = await InscriptionInfo(inscription_id);
             console.log("bitmapInfo: ", bitmapInfo.data);
             const state: IListingState = {
@@ -438,7 +441,7 @@ function ConstructSellerPsbtCard() {
                 makerFeeBp: 0, //卖家先不收手续费
                 sellerOrdAddress: address,
                 // price需要卖家输入
-                price: 888,
+                price: 550,
                 ordItem: {
                   id: bitmapInfo.data.id,
                   owner: address,
@@ -906,6 +909,46 @@ function SignPsbtCard() {
   );
 }
 
+function SignBase64PsbtCard() {
+  const [psbtBase64, setPsbtBase64] = useState("");
+  const [psbtResult, setPsbtResult] = useState("");
+  return (
+    <Card size="small" title="Sign Psbt" style={{ width: 300, margin: 10 }}>
+      <div style={{ textAlign: "left", marginTop: 10 }}>
+        <div style={{ fontWeight: "bold" }}>PsbtBase64:</div>
+        <Input
+          defaultValue={psbtBase64}
+          onChange={(e) => {
+            setPsbtBase64(e.target.value);
+          }}
+        ></Input>
+      </div>
+      <div style={{ textAlign: "left", marginTop: 10 }}>
+        <div style={{ fontWeight: "bold" }}>Result:</div>
+        <div style={{ wordWrap: "break-word" }}>{psbtResult}</div>
+      </div>
+      <Button
+        style={{ marginTop: 10 }}
+        onClick={async () => {
+          try {
+            const hexPsbt = bitcoin.Psbt.fromBase64(psbtBase64).toHex();
+            console.log("base64Psbt: ", hexPsbt);
+            const psbtResult = await (window as any).unisat.signPsbt(hexPsbt, {
+              autoFinalized: true,
+            });
+            const signedBase64Psbt = bitcoin.Psbt.fromHex(psbtResult).toBase64();
+            console.log("signedBase64Psbt: ", signedBase64Psbt)
+          } catch (e) {
+            setPsbtResult((e as any).message);
+          }
+        }}
+      >
+        Sign base64 Psbt
+      </Button>
+    </Card>
+  );
+}
+
 function SweepCard() {
   const [psbtHex, setPsbtHex] = useState("");
   const [txid, setTxid] = useState("");
@@ -936,6 +979,7 @@ function SweepCard() {
             const result = [];
             for (const id of inscription_id_list) {
               const info = await InscriptionInfo(id); //这里为了简化流程，去查了第三方，正常线上这些信息是从marketplace列表信息拿 包括price
+              console.log("id: , info: ", id, info)
               result.push(info.data);
             }
             console.log("result: ", result);
@@ -1012,12 +1056,12 @@ function SweepCard() {
                 setupfee = calculateTxBytesFeeWithRate(
                   selectedUtxos.length,
                   11, //十个对齐 + 一个找零
-                  feeRateRes.fastestFee
+                  feeRateRes.economyFee
                 );
                 purchasefee = calculateTxBytesFeeWithRate(
                   inscription_id_list.length * 2 + 1, // N+1个对齐 + N个卖家的铭文 + 一个买
                   inscription_id_list.length * 2 + 13, // 一个合并 + N个铭文 + 10个对齐 + N个给卖家的钱 + 平台手续费 + 找零
-                  feeRateRes.fastestFee
+                  feeRateRes.economyFee
                 );
 
                 //价格 + 600的对齐utxo * 10 + gas
@@ -1157,7 +1201,7 @@ function SweepCard() {
                 purchasefee = calculateTxBytesFeeWithRate(
                   inscription_id_list.length * 2 + 1, // N+1个对齐 + N个卖家的铭文 + 一个买
                   inscription_id_list.length * 2 + 13, // 一个合并 + N个铭文 + 10个对齐 + N个给卖家的钱 + 平台手续费 + 找零
-                  feeRateRes.fastestFee
+                  feeRateRes.economyFee
                 );
                 console.log(purchasefee);
                 if (
@@ -1210,7 +1254,7 @@ function SweepCard() {
                 buyerDummyUTXOs: selectDummyUtxos,
                 buyerPaymentUTXOs: selectedPaymentUtxo,
                 buyerPublicKey: publicKey,
-                feeRate: feeRateRes.fastestFee,
+                feeRate: feeRateRes.economyFee,
                 platformFeeAddress: "bc1pjutzl7wrvr8qt3vs0xn0xjyh2ezj3mhq2m0u7f2f8qarq9ng8w9qvm6g22",
               },
             };

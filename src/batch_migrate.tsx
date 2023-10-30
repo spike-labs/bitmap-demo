@@ -11,6 +11,7 @@ import * as bitcoin from "bitcoinjs-lib";
 import { IListingState } from "./interfaces";
 import { generateUnsignedListingPSBTBase64 } from "./psbt";
 import { isTaprootAddress } from "./util";
+import { number } from "bitcoinjs-lib/src/script";
 
 export function BatchMigrateCard() {
   const [publicKey, setPublicKey] = useState("");
@@ -28,15 +29,26 @@ export function BatchMigrateCard() {
           const publicKey = await unisat.getPublicKey();
           setPublicKey(publicKey);
           try {
-            ///查询用户在ordinals wallet那挂的bitmap单
-            const escrowList = await Post(
-              "http://localhost:3001/api/v1/tx/escrowInfo",
+            //展示该钱包下有效的订单
+            const list = await Post(
+              "http://localhost:3002/api/v1/order/list",
               {
-                wallet_address: address,
+                address: address,
+                page: 1,
+                limit: 2
+              }
+            );
+            console.log("list: ", list)
+
+            //查询用户在ordyssey的订单
+            const escrowList = await Post(
+              "http://localhost:3002/api/v1/order/copy",
+              {
+                address: address,
               }
             );
             let unsignedPsbtHex: any[] = [];
-            console.log("escrowList: ", escrowList);
+            console.log("order list: ", escrowList);
             const f1 = async() => {
               for (let index = 0; index < escrowList.data.length; index++) {
                 console.log("index: ", index)
@@ -93,7 +105,33 @@ export function BatchMigrateCard() {
             ).unisat.signPsbts(unsignedPsbtHex, {
               autoFinalized: true,
             });
-            console.log("sellerSignedPsbtHex===: ", sellerSignedPsbtHex);
+
+            let signedPsbtBase64List: any[] = [];
+
+            for (let index = 0; index < sellerSignedPsbtHex.length; index++) {
+              const signedBuyingBase64 = bitcoin.Psbt.fromHex(
+                sellerSignedPsbtHex[index]
+              ).toBase64();
+              signedPsbtBase64List.push({
+                inscription_id: escrowList.data[index].inscription_id,
+                price: escrowList.data[index].price,
+                seller_address: escrowList.data[index].address,
+                signed_seller_psbt_base64: signedBuyingBase64,
+                number: escrowList.data[index].number,
+                collection: escrowList.data[index].collection,
+                output_value: escrowList.data[index].output_value,
+                output: escrowList.data[index].output,
+                location: escrowList.data[index].location,
+              });
+            }
+            //签完名之后  调用后端接口保存
+            const res = await Post(
+              "http://localhost:3002/api/v1/order/create",
+              {
+                list: signedPsbtBase64List,
+              }
+            );
+            console.log("res: ", res)
           } catch (e) {
             console.log(e);
           }
