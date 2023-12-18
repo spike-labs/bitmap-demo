@@ -34,6 +34,12 @@ const network =
     ? bitcoin.networks.bitcoin
     : bitcoin.networks.testnet;
 
+export type NormalResponse<T> = {
+    code: number
+    data: T
+    msg: string
+}
+
 export function mergeSignedBuyingPSBTBase64(
   signedListingPSBTBase64: string,
   signedBuyingPSBTBase64: string
@@ -429,7 +435,7 @@ export async function generateUnsignedListingPSBTBase64(
   const psbt = new bitcoin.Psbt({ network });
   const [ordinalUtxoTxId, ordinalUtxoVout] =
     listing.seller.ordItem.output.split(":");
-  const res = await Post("http://localhost:3002/api/v1/tx/raw", {
+  const res = await Post("https://api-mainnet.brc420.io/api/v1/tx/raw", {
     tx_hash: ordinalUtxoTxId,
   });
   const tx = bitcoin.Transaction.fromHex(res.data);
@@ -535,7 +541,7 @@ async function getSweepSellerInputAndOutput(state: ISweepItem) {
 async function getSellerInputAndOutput(listing: IListingState) {
   const [ordinalUtxoTxId, ordinalUtxoVout] =
     listing.seller.ordItem.output.split(":");
-  const res = await Post("http://localhost:3002/api/v1/tx/raw", {
+  const res = await Post("https://api-mainnet.brc420.io/api/v1/tx/raw", {
     tx_hash: ordinalUtxoTxId,
   });
   const tx = bitcoin.Transaction.fromHex(res.data);
@@ -598,4 +604,100 @@ export async function selectSweepDummyUTXOs(
   }
 
   return null;
+}
+
+export async function generateUnsignedListingPSBTBase64Batch(
+  listingArr: IListingState[]
+) {
+  const tx_hash_list = listingArr.map((listing) => {
+    return listing.seller.ordItem.output.split(':')[0]
+  })
+
+  const tx_hash_list_res = await tx_batch_raw({
+    tx_hash_list,
+  })
+
+  const psbt = new bitcoin.Psbt({ network })
+  listingArr.map((listing, index) => {
+    // check listing attributes
+    if (listing.seller.makerFeeBp < 0 || listing.seller.makerFeeBp > 1) {
+      throw new InvalidArgumentError('The makeFeeBp range should be [0,1].')
+    }
+
+    const [ordinalUtxoTxId, ordinalUtxoVout] =
+      listing.seller.ordItem.output.split(':')
+    const res = tx_hash_list_res?.data[index]
+    const tx = bitcoin.Transaction.fromHex(res)
+    // No need to add this witness if the seller is using taproot
+    if (!listing.seller.tapInternalKey) {
+      for (const output in tx.outs) {
+        try {
+          tx.setWitness(parseInt(output), [])
+        } catch {}
+      }
+    }
+    const input: any = {
+      hash: ordinalUtxoTxId,
+      index: parseInt(ordinalUtxoVout),
+      nonWitnessUtxo: Buffer.from(res, 'hex'),
+      // No problem in always adding a witnessUtxo here
+      witnessUtxo: tx.outs[parseInt(ordinalUtxoVout)],
+      sighashType:
+        bitcoin.Transaction.SIGHASH_SINGLE |
+        bitcoin.Transaction.SIGHASH_ANYONECANPAY,
+    }
+    // for p2sh account
+    const p2shInputRedeemScript: any = {}
+    const p2shInputWitnessUTXO: any = {}
+    if (signer.isP2SHAddress(listing.seller.sellerOrdAddress, network)) {
+      const redeemScript = bitcoin.payments.p2wpkh({
+        pubkey: Buffer.from(listing.seller.sellerPublicKey!, 'hex'),
+      }).output
+      const p2sh = bitcoin.payments.p2sh({
+        redeem: { output: redeemScript },
+      })
+      p2shInputWitnessUTXO.witnessUtxo = {
+        script: p2sh.output,
+        value: listing.seller.ordItem.outputValue,
+      } as signer.WitnessUtxo
+      p2shInputRedeemScript.redeemScript = p2sh.redeem?.output
+    }
+    if (listing.seller.tapInternalKey) {
+      input.tapInternalKey = toXOnly(
+        tx.toBuffer().constructor(listing.seller.tapInternalKey, 'hex')
+      )
+    }
+    psbt.addInput({
+      ...input,
+      ...p2shInputRedeemScript,
+      ...p2shInputWitnessUTXO,
+    })
+
+    const sellerOutput: number =
+      listing.seller.price + listing.seller.ordItem.outputValue
+    psbt.addOutput({
+      address: listing.seller.sellerReceiveAddress,
+      value: sellerOutput,
+    })
+  })
+  return psbt.toBase64()
+}
+
+export async function tx_batch_raw({
+  tx_hash_list,
+}: {
+  tx_hash_list: string[]
+}) {
+  const res = await fetch(`http://localhost:3002/api/v1/tx/batch/raw`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      tx_hash_list,
+    }),
+  })
+
+  const data: NormalResponse<string[]> = await res.json()
+  return data
 }

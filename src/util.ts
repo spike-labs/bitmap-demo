@@ -36,7 +36,7 @@ export function calculateTxBytesFeeWithRate(vinsLength: number, voutsLength: num
 export async function mapUtxos(utxosFromMempool: AddressTxsUtxo[]): Promise<utxo[]> {
   const ret = [];
   for (const utxoFromMempool of utxosFromMempool) {
-    const res = await Post("http://localhost:3002/api/v1/tx/raw", {
+    const res = await Post("https://api-mainnet.brc420.io/api/v1/tx/raw", {
       tx_hash: utxoFromMempool.txid,
     });
       ret.push({

@@ -25,9 +25,11 @@ import {
   isTaprootAddress,
   calculateTxBytesFeeWithRate,
 } from "./util";
-import { BatchMigrateCard } from "./batch_migrate";
+import { BatchMigrateCard} from "./batch_migrate";
+import { OKXWalletSellerCard, OKXWalletBuyerCard } from "./okx"
 import {
   generateUnsignedListingPSBTBase64,
+  generateUnsignedListingPSBTBase64Batch,
   generateUnsignedBuyingPSBTBase64,
   selectDummyUTXOs,
   selectSweepDummyUTXOs,
@@ -87,7 +89,7 @@ function App() {
 
       getBasicInfo();
     } else {
-      setConnected(false);
+      setConnected(false); 
     }
   };
 
@@ -168,6 +170,7 @@ function App() {
     );
   }
   const unisat = (window as any).unisat;
+
   return (
     <div className="App">
       <header className="App-header">
@@ -394,12 +397,15 @@ function App() {
           <div>
             <Button
               onClick={async () => {
-                const result = await unisat.requestAccounts();
+                const result = await unisat.requestAccounts()
                 handleAccountsChanged(result);
               }}
             >
               Connect Unisat Wallet
             </Button>
+
+            <OKXWalletSellerCard/>
+            <OKXWalletBuyerCard/>
           </div>
         )}
       </header>
@@ -429,30 +435,30 @@ function ConstructSellerPsbtCard() {
           setPublicKey(publicKey);
           try {
             //用户选择一个挂单
-            const inscription_id =
-              "c7dfdff40591cd277ea3ba10fa08b422c6664b64428a4aa01c0936d3cf0aa647i0";
-              //"0de393ca5bece5c17a4efd394804b0d857aee04d5e521a0f7e594870b00f9499i0";
-              //"f24f62c8606f91cfd222d4d66c1a99d122d170e0de287a4130ecbdfc70f6712ei0"
-            const bitmapInfo = await InscriptionInfo(inscription_id);
-            console.log("bitmapInfo: ", bitmapInfo.data);
+            const inscription_id  = 
+              "55c5fd74ccd5c4f3944a0e1d0f19f3c452bce3c97a56a81a3f7f861a4969ccbai0";
+          
+            const info = await InscriptionInfo(inscription_id);
+            console.log("info:", info)
             const state: IListingState = {
               //默认值的都是不需要的
               seller: {
                 makerFeeBp: 0, //卖家先不收手续费
                 sellerOrdAddress: address,
                 // price需要卖家输入
-                price: 550,
+                price: 666,
                 ordItem: {
-                  id: bitmapInfo.data.id,
+                  id: info.data.id,
                   owner: address,
-                  location: bitmapInfo.data.location,
-                  outputValue: bitmapInfo.data.value, //这里是idclub的新接口，返回的是number
-                  output: bitmapInfo.data.output,
+                  location: info.data.location,
+                  outputValue: info.data.value, //这里是idclub的新接口，返回的是number
+                  output: info.data.output,
                 },
                 sellerReceiveAddress: address,
                 sellerPublicKey: publicKey,
               },
-            };
+            }
+        
             if (isTaprootAddress(address)) {
               state.seller.tapInternalKey = publicKey;
             }
@@ -485,10 +491,10 @@ function ConstructSellerPsbtCard() {
             const sellerSignedPsbtBase64 = base64.encode(signdPsbt.toPSBT(0));
 
             console.log("sellerSignedPsbtBase64: ", sellerSignedPsbtBase64);
-            await Post("http://localhost:3002/api/v1/market/list", {
-              inscription_id: bitmapInfo.data.id,
-              un_verify_psbt: sellerSignedPsbtBase64,
-            });
+            // await Post("http://localhost:3002/api/v1/market/list", {
+            //   inscription_id: bitmapInfo.data.id,
+            //   un_verify_psbt: sellerSignedPsbtBase64,
+            // });
           } catch (e) {
             console.log(e);
           }
@@ -517,14 +523,14 @@ function ConstructBuyerPsbtCard() {
           const unisat = (window as any).unisat;
           const [address] = await unisat.getAccounts();
           setAddress(address);
-
           const publicKey = await unisat.getPublicKey();
           setPublicKey(publicKey);
           try {
             const inscription_id =
-              "f24f62c8606f91cfd222d4d66c1a99d122d170e0de287a4130ecbdfc70f6712ei0";
-            const price = 546;
-            const outputValue = 546;
+              "5f2a6e2983e62a92bb7f64580832482ac52549b00b79342af05d39e70482dd78i0";
+            const info = await InscriptionInfo(inscription_id);
+            const price = 666;
+          
             const takerFee = 0.01; //买家平台费1%
             //这个接口的作用是查询这个utxo是否包含铭文，我们在前面简单的直接通过value的值来判断，这里直接返回null表明没有包含铭文
             class demoItemProvider implements signer.ItemProvider {
@@ -541,7 +547,7 @@ function ConstructBuyerPsbtCard() {
             }
             let unspentList: any[] = [];
             //这个有改动，和铭刻的时候返回的数据有差别
-            await Post("http://localhost:3002/api/v1/market/utxo", {
+            await Post("https://api-mainnet.brc420.io/api/v1/market/utxo", {
               address: address,
             }).then((data) => {
               console.log("data: ", data);
@@ -604,7 +610,7 @@ function ConstructBuyerPsbtCard() {
                 if (
                   selectedAmount >
                   price +
-                    (price - outputValue) * takerFee +
+                    (price - info.data.value) * takerFee +
                     DUMMY_UTXO_VALUE * 4 +
                     purchasefee +
                     setupfee
@@ -615,7 +621,7 @@ function ConstructBuyerPsbtCard() {
               if (
                 selectedAmount <
                 price +
-                  (price - outputValue) * takerFee +
+                  (price - info.data.value) * takerFee +
                   DUMMY_UTXO_VALUE * 4 +
                   purchasefee +
                   setupfee
@@ -690,7 +696,7 @@ function ConstructBuyerPsbtCard() {
               console.log("raw: ", p.extractTransaction().toHex());
               //广播并拿到setup txhash
               const boardCastRes = await Post(
-                "http://localhost:3002/api/v1/tx/broadcast",
+                "https://api-mainnet.brc420.io/api/v1/tx/broadcast",
                 { signed_tx_data: setUpPSBTHex }
               );
               console.log("setup txHash: ", boardCastRes.data);
@@ -751,11 +757,11 @@ function ConstructBuyerPsbtCard() {
                   feeRateRes.fastestFee
                 );
                 console.log(purchasefee);
-                if (selectedAmount > price + outputValue + purchasefee) {
+                if (selectedAmount > price + info.data.value + purchasefee) {
                   break;
                 }
               }
-              if (selectedAmount < price + outputValue + purchasefee) {
+              if (selectedAmount < price + info.data.value + purchasefee) {
                 console.log("not enough btc");
                 return;
               }
@@ -772,20 +778,20 @@ function ConstructBuyerPsbtCard() {
               seller: {
                 makerFeeBp: 0, //卖家不收钱
                 sellerOrdAddress: "",
-                price: price - outputValue,
+                price: price,
                 ordItem: {
-                  id: "f24f62c8606f91cfd222d4d66c1a99d122d170e0de287a4130ecbdfc70f6712ei0",
+                  id: info.data.id,
                   owner:
-                    "bc1pu637fe5t20njrsuulsgwvvmq34s6w53hleavm3aesxelr4p8u6zsqvw88r",
+                    info.data.address,
                   location:
-                    "f24f62c8606f91cfd222d4d66c1a99d122d170e0de287a4130ecbdfc70f6712e:0:0",
-                  outputValue: outputValue,
+                    info.data.location,
+                  outputValue: info.data.value,
                   output:
-                    "f24f62c8606f91cfd222d4d66c1a99d122d170e0de287a4130ecbdfc70f6712e:0",
+                    info.data.output,
                   listedPrice: price,
                 },
                 sellerReceiveAddress:
-                  "bc1pu637fe5t20njrsuulsgwvvmq34s6w53hleavm3aesxelr4p8u6zsqvw88r",
+                    info.data.address,
               },
               buyer: {
                 takerFeeBp: takerFee, //买家收钱，费率1%
@@ -794,7 +800,8 @@ function ConstructBuyerPsbtCard() {
                 buyerDummyUTXOs: selectDummyUtxos,
                 buyerPaymentUTXOs: selectedPaymentUtxo,
                 buyerPublicKey: publicKey,
-                feeRate: feeRateRes.fastestFee,
+                //feeRate: feeRateRes.fastestFee,
+                feeRate: 80,
                 platformFeeAddress: "",
               },
             };
@@ -823,14 +830,14 @@ function ConstructBuyerPsbtCard() {
             const signedBuyingPSBTBase64 =
               bitcoin.Psbt.fromHex(signedBuyingPSBTHex).toBase64();
             console.log("signedBuyingPSBTBase64===: ", signedBuyingPSBTBase64);
-            const purchaseRes = await Post(
-              "http://localhost:3002/api/v1/tx/merge",
-              {
-                signed_buyer_psbt: signedBuyingPSBTBase64,
-                inscription_id: inscription_id,
-              }
-            );
-            console.log("purchase txHash: ", purchaseRes.data);
+            // const purchaseRes = await Post(
+            //   "http://localhost:3002/api/v1/tx/merge",
+            //   {
+            //     signed_buyer_psbt: signedBuyingPSBTBase64,
+            //     inscription_id: inscription_id,
+            //   }
+            // );
+            // console.log("purchase txHash: ", purchaseRes.data);
 
             //将卖家和买家签名后的psbt合并之后广播, 落库
             // const finalPsbt = mergeSignedBuyingPSBTBase64(
@@ -873,6 +880,8 @@ function ConstructBuyerPsbtCard() {
 function SignPsbtCard() {
   const [psbtHex, setPsbtHex] = useState("");
   const [psbtResult, setPsbtResult] = useState("");
+  const [publicKey, setPublicKey] = useState("");
+  const [address, setAddress] = useState("");
   return (
     <Card size="small" title="Sign Psbt" style={{ width: 300, margin: 10 }}>
       <div style={{ textAlign: "left", marginTop: 10 }}>
@@ -892,7 +901,14 @@ function SignPsbtCard() {
         style={{ marginTop: 10 }}
         onClick={async () => {
           try {
+            const unisat = (window as any).unisat;
+            const [address] = await unisat.getAccounts();
+            setAddress(address);
+  
+            const publicKey = await unisat.getPublicKey();
+            setPublicKey(publicKey);
             const psbtResult = await (window as any).unisat.signPsbt(psbtHex, {
+              //toSignInputs:[{index:0, address: address, sighashTypes: [1,3,1]},{index:1, address: address,sighashTypes: [1,3,1]},{index:2, address: address, sighashTypes: [1,3,1]}],
               autoFinalized: true,
             });
             setPsbtResult(psbtResult);
@@ -931,6 +947,7 @@ function SignBase64PsbtCard() {
         style={{ marginTop: 10 }}
         onClick={async () => {
           try {
+          
             const hexPsbt = bitcoin.Psbt.fromBase64(psbtBase64).toHex();
             console.log("base64Psbt: ", hexPsbt);
             const psbtResult = await (window as any).unisat.signPsbt(hexPsbt, {
@@ -1344,13 +1361,13 @@ async function getUnspent(address = "") {
 
   return await res.json();
 }
-async function InscriptionInfo(id = "") {
-  const url = `http://localhost:3002/api/v1/inscription/info?inscription_id=${id}`;
+export async function InscriptionInfo(id = "") {
+  const url = `https://api-mainnet.brc420.io/api/v1/inscription/info?inscription_id=${id}`;
   const res = await Fetch(url);
 
   return await res.json();
 }
-async function feeRate() {
+export async function feeRate() {
   const url = "https://mempool.space/api/v1/fees/recommended";
   const res = await Fetch(url);
   return await res.json();

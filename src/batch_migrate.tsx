@@ -29,40 +29,32 @@ export function BatchMigrateCard() {
           const publicKey = await unisat.getPublicKey();
           setPublicKey(publicKey);
           try {
-            //展示该钱包下有效的订单
-            const list = await Post(
-              "http://localhost:3002/api/v1/order/list",
-              {
-                address: address,
-                page: 1,
-                limit: 2
-              }
-            );
-            console.log("list: ", list)
-
             //查询用户在ordyssey的订单
             const escrowList = await Post(
               "http://localhost:3002/api/v1/order/copy",
               {
                 address: address,
+                page: 1,
+                limit: 10,
               }
             );
             let unsignedPsbtHex: any[] = [];
             console.log("order list: ", escrowList);
+            console.log('data len: ',escrowList.data.length)
             const f1 = async() => {
-              for (let index = 0; index < escrowList.data.length; index++) {
+              for (let index = 0; index < escrowList.data.data.length; index++) {
                 console.log("index: ", index)
                 const state: IListingState = {
                   seller: {
                     makerFeeBp: 0,
-                    sellerOrdAddress: escrowList.data[index].seller_address,
-                    price: escrowList.data[index].price,
+                    sellerOrdAddress: escrowList.data.data[index].seller_address,
+                    price: escrowList.data.data[index].price,
                     ordItem: {
-                      id: escrowList.data[index].inscription_id,
+                      id: escrowList.data.data[index].inscription_id,
                       owner: address,
-                      location: escrowList.data[index].location,
-                      outputValue: escrowList.data[index].output_value,
-                      output: escrowList.data[index].output,
+                      location: escrowList.data.data[index].location,
+                      outputValue: escrowList.data.data[index].output_value,
+                      output: escrowList.data.data[index].output,
                     },
                     sellerReceiveAddress: address,
                     sellerPublicKey: publicKey,
@@ -102,7 +94,7 @@ export function BatchMigrateCard() {
             console.log("any[]: ", unsignedPsbtHex);
             const sellerSignedPsbtHex = await (
               window as any
-            ).unisat.signPsbts(unsignedPsbtHex, {
+            ).unisat.signPsbt(unsignedPsbtHex, {
               autoFinalized: true,
             });
 
@@ -113,15 +105,15 @@ export function BatchMigrateCard() {
                 sellerSignedPsbtHex[index]
               ).toBase64();
               signedPsbtBase64List.push({
-                inscription_id: escrowList.data[index].inscription_id,
-                price: escrowList.data[index].price,
-                seller_address: escrowList.data[index].address,
+                inscription_id: escrowList.data.data[index].inscription_id,
+                price: escrowList.data.data[index].price,
+                seller_address: escrowList.data.data[index].address,
                 signed_seller_psbt_base64: signedBuyingBase64,
-                number: escrowList.data[index].number,
-                collection: escrowList.data[index].collection,
-                output_value: escrowList.data[index].output_value,
-                output: escrowList.data[index].output,
-                location: escrowList.data[index].location,
+                number: escrowList.data.data[index].number,
+                collection: escrowList.data.data[index].collection,
+                output_value: escrowList.data.data[index].output_value,
+                output: escrowList.data.data[index].output,
+                location: escrowList.data.data[index].location,
               });
             }
             //签完名之后  调用后端接口保存
