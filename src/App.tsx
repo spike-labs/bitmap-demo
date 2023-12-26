@@ -27,6 +27,7 @@ import {
 } from "./util";
 import { BatchMigrateCard} from "./batch_migrate";
 import { OKXWalletSellerCard, OKXWalletBuyerCard } from "./okx"
+import { BitgetWalletSellerCard, BitgetWalletBuyerCard } from "./bitget"
 import {
   generateUnsignedListingPSBTBase64,
   generateUnsignedListingPSBTBase64Batch,
@@ -406,6 +407,9 @@ function App() {
 
             <OKXWalletSellerCard/>
             <OKXWalletBuyerCard/>
+
+            <BitgetWalletSellerCard></BitgetWalletSellerCard>
+            <BitgetWalletBuyerCard></BitgetWalletBuyerCard>
           </div>
         )}
       </header>
