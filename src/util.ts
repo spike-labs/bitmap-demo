@@ -24,19 +24,35 @@ export function isTaprootAddress(address: any) {
   return false;
 }
 
-export function calculateTxBytesFeeWithRate(vinsLength: number, voutsLength: number, feeRate: number): number {
-  console.log("vinsLength: voutsLength: feeRate: ", vinsLength, voutsLength, feeRate)
-  let baseSize = 8 + 1 + 1 + 41 * vinsLength + (9 + 23) * voutsLength
-  let totalSize = baseSize + 2 + vinsLength * 1 + vinsLength * 67
-  const weight = baseSize * 3 + totalSize 
-  const txVirtualSize = (weight + 3) / 4
-  return Math.ceil(txVirtualSize * (feeRate + 4)) //计算有误差， 多次测试发现 +4 比较合适(会偏大一点)
+export function getOutputSize(address: string) {
+  if (address.startsWith("bc1q")) {
+      return 28;
+  } else if (address.startsWith("3")) {
+      return 32;
+  } else if (address.startsWith("1")) {
+      return 34;
+  }
+  return 43;
+}
+
+export function calculateTxBytesFeeWithRate(sellerAddress: string, buyerAddress: string, itemNum: number, vinsLength: number, voutsLength: number, feeRate: number): number {
+  const sellerOutputSize = getOutputSize(sellerAddress)
+  const buyerOutputSize = getOutputSize(buyerAddress)
+  //item = 0 就是不买东西，
+  if (itemNum === 0) {
+    const txFee =  Math.round(28.5 + 57.5 * vinsLength + sellerOutputSize * voutsLength) * feeRate
+    return txFee
+  }
+  const buyerVoutLength = 3 + itemNum * 2
+  console.log("vinsLength: sellerOutputSize: itemNum: buyerVoutLength: buyerOutputSize", vinsLength, sellerOutputSize, itemNum, buyerVoutLength, buyerOutputSize)
+  const txFee =  Math.round(28.5 + 57.5 * vinsLength + sellerOutputSize * itemNum + buyerVoutLength * buyerOutputSize + 43) * feeRate
+  return txFee
 }
 
 export async function mapUtxos(utxosFromMempool: AddressTxsUtxo[]): Promise<utxo[]> {
   const ret = [];
   for (const utxoFromMempool of utxosFromMempool) {
-    const res = await Post("https://api-mainnet.brc420.io/api/v1/tx/raw", {
+    const res = await Post("https://api-global.brc420.io/api/v1/tx/raw", {
       tx_hash: utxoFromMempool.txid,
     });
       ret.push({

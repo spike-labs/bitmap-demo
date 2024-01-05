@@ -188,7 +188,7 @@ export async function generateUnsignedBuyingPSBTBase64(listing: IListingState) {
 
   if (platformFeeValue > 0) {
     psbt.addOutput({
-      address: PLATFORM_FEE_ADDRESS,
+      address: "bc1pndths0lnsvem2a0n2c6t49u462xam0n4krjl6kpfwn0nknc0cd7qmnxhf8",
       value: platformFeeValue,
     });
   }
@@ -204,13 +204,13 @@ export async function generateUnsignedBuyingPSBTBase64(listing: IListingState) {
   });
 
   const fee = calculateTxBytesFeeWithRate(
+    listing.seller.sellerReceiveAddress,
+    listing.buyer.buyerAddress,
+    1,
     psbt.txInputs.length,
     psbt.txOutputs.length + 1, //+1 加的是找零的那个长度 // already taken care of the exchange output bytes calculation
     listing.buyer.feeRate ?? 10
   );
-  console.log("input len: ", psbt.txInputs.length);
-  console.log("output len: ", psbt.txOutputs.length + 1);
-  console.log("fee: ", fee);
 
   const totalOutput = psbt.txOutputs.reduce(
     (partialSum, a) => partialSum + a.value,
@@ -408,7 +408,7 @@ export async function generateUnsignedSweepPSBTBase64(listing: ISweepState) {
   if (changeValue < 0) {
     throw `Your wallet address doesn't have enough funds to buy this inscription.
   Price:      ${satToBtc(totalPrice)} BTC
-  Required:   ${satToBtc(totalOutput + fee)} BTC
+  Required:   ${satToBtc(totalOutput + fee)} BTC 
   Missing:    ${satToBtc(-changeValue)} BTC`;
   }
 
@@ -435,7 +435,7 @@ export async function generateUnsignedListingPSBTBase64(
   const psbt = new bitcoin.Psbt({ network });
   const [ordinalUtxoTxId, ordinalUtxoVout] =
     listing.seller.ordItem.output.split(":");
-  const res = await Post("https://api-mainnet.brc420.io/api/v1/tx/raw", {
+  const res = await Post("https://api-global.brc420.io/api/v1/tx/raw", {
     tx_hash: ordinalUtxoTxId,
   });
   const tx = bitcoin.Transaction.fromHex(res.data);
@@ -541,7 +541,7 @@ async function getSweepSellerInputAndOutput(state: ISweepItem) {
 async function getSellerInputAndOutput(listing: IListingState) {
   const [ordinalUtxoTxId, ordinalUtxoVout] =
     listing.seller.ordItem.output.split(":");
-  const res = await Post("https://api-mainnet.brc420.io/api/v1/tx/raw", {
+  const res = await Post("https://api-global.brc420.io/api/v1/tx/raw", {
     tx_hash: ordinalUtxoTxId,
   });
   const tx = bitcoin.Transaction.fromHex(res.data);

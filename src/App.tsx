@@ -531,9 +531,9 @@ function ConstructBuyerPsbtCard() {
           setPublicKey(publicKey);
           try {
             const inscription_id =
-              "5f2a6e2983e62a92bb7f64580832482ac52549b00b79342af05d39e70482dd78i0";
+              "6f33321d818415ff27b84ecb2cfd1002a3f59e25111f918fd5fe17df8efbfbe7i0";
             const info = await InscriptionInfo(inscription_id);
-            const price = 666;
+            const price = 9900;
           
             const takerFee = 0.01; //买家平台费1%
             //这个接口的作用是查询这个utxo是否包含铭文，我们在前面简单的直接通过value的值来判断，这里直接返回null表明没有包含铭文
@@ -551,7 +551,7 @@ function ConstructBuyerPsbtCard() {
             }
             let unspentList: any[] = [];
             //这个有改动，和铭刻的时候返回的数据有差别
-            await Post("https://api-mainnet.brc420.io/api/v1/market/utxo", {
+            await Post("https://api-global.brc420.io/api/v1/market/utxo", {
               address: address,
             }).then((data) => {
               console.log("data: ", data);
@@ -600,11 +600,17 @@ function ConstructBuyerPsbtCard() {
                 console.log("selectedUtxos.length : ", selectedUtxos.length);
 
                 setupfee = calculateTxBytesFeeWithRate(
+                  address,
+                  address,
+                  0,
                   selectedUtxos.length,
                   3, //两个对齐 + 一个找零
                   feeRateRes.fastestFee
                 );
                 purchasefee = calculateTxBytesFeeWithRate(
+                  info.data.address,
+                  address,
+                  1,
                   4, //两个对齐 + 一个买 + 一个卖家的铭文
                   7, //固定的
                   feeRateRes.fastestFee
@@ -700,7 +706,7 @@ function ConstructBuyerPsbtCard() {
               console.log("raw: ", p.extractTransaction().toHex());
               //广播并拿到setup txhash
               const boardCastRes = await Post(
-                "https://api-mainnet.brc420.io/api/v1/tx/broadcast",
+                "https://api-global.brc420.io/api/v1/tx/broadcast",
                 { signed_tx_data: setUpPSBTHex }
               );
               console.log("setup txHash: ", boardCastRes.data);
@@ -756,6 +762,9 @@ function ConstructBuyerPsbtCard() {
                 selectedUtxos.push(utxo);
                 selectedAmount += utxo.value;
                 purchasefee = calculateTxBytesFeeWithRate(
+                  info.data.address,
+                  address,
+                  1,
                   3 + selectedUtxos.length,
                   7,
                   feeRateRes.fastestFee
@@ -804,8 +813,8 @@ function ConstructBuyerPsbtCard() {
                 buyerDummyUTXOs: selectDummyUtxos,
                 buyerPaymentUTXOs: selectedPaymentUtxo,
                 buyerPublicKey: publicKey,
-                //feeRate: feeRateRes.fastestFee,
-                feeRate: 80,
+                feeRate: feeRateRes.fastestFee,
+                //feeRate: 250,
                 platformFeeAddress: "",
               },
             };
@@ -1366,7 +1375,7 @@ async function getUnspent(address = "") {
   return await res.json();
 }
 export async function InscriptionInfo(id = "") {
-  const url = `https://api-mainnet.brc420.io/api/v1/inscription/info?inscription_id=${id}`;
+  const url = `https://api-global.brc420.io/api/v1/inscription/info?inscription_id=${id}`;
   const res = await Fetch(url);
 
   return await res.json();
